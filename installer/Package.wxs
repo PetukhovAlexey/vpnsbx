@@ -1,7 +1,7 @@
 <!--
   VPN-песочница: служба vpnsbx (фильтр, LocalSystem, автозапуск) и окно
   vpnsbx-ui (меню «Пуск», значок в трее при входе в систему).
-  Драйвер Windows Packet Filter не входит: его ставит пользователь.
+  Драйвер Windows Packet Filter не входит: его ставит vpnsbx-setup.exe (Bundle.wxs).
   Сборка: installer\build.cmd
   Проверка: wix msi validate -sice ICE43 -sice ICE57 dist\vpnsbx-<версия>.msi
   (ICE43/57 требуют ключ HKCU для ярлыка в «Пуске»; для perMachine это ложная тревога.)
@@ -12,7 +12,7 @@
            UpgradeCode="87c9c292-b323-4cac-8179-fe7a55425bd0"
            Language="1049" Codepage="1251" Scope="perMachine" InstallerVersion="500">
     <SummaryInformation Description="VPN-песочница для процессов" Codepage="1251" />
-    <MajorUpgrade DowngradeErrorMessage="Уже установлена более новая версия VPN-песочницы." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="Уже установлена более новая версия VPN-песочницы." />
     <MediaTemplate EmbedCab="yes" />
 
     <Icon Id="app.ico" SourceFile="$(sys.SOURCEFILEDIR)..\assets\icon.ico" />

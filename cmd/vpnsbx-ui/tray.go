@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ var (
 	procDispatchMessageW        = user32.NewProc("DispatchMessageW")
 	procPostQuitMessage         = user32.NewProc("PostQuitMessage")
 	procShellNotifyIconW        = shell32.NewProc("Shell_NotifyIconW")
+	procRegisterAppRestart      = windows.NewLazySystemDLL("kernel32.dll").NewProc("RegisterApplicationRestart")
 )
 
 const (
@@ -53,6 +55,7 @@ const (
 	wmNull        = 0x0000
 	wmClose       = 0x0010
 	wmQuit        = 0x0012
+	wmEndSession  = 0x0016
 	wmLButtonUp   = 0x0202
 	wmLButtonDbl  = 0x0203
 	wmRButtonUp   = 0x0205
@@ -176,6 +179,9 @@ func newTray() *tray {
 	t.state = trayState{tip: "VPN-песочница"}
 	theTray = t
 	t.notify(nimAdd)
+	// Установщик закрывает UI через Restart Manager и после обновления
+	// запускает его снова — сразу в трей.
+	procRegisterAppRestart.Call(uintptr(unsafe.Pointer(u16("--tray"))), 0)
 	go t.poll()
 	return t
 }
@@ -272,6 +278,9 @@ func trayProc(hwnd, msg, wp, lp uintptr) uintptr {
 		case msg == t.taskbarCreated && msg != 0: // проводник перезапустился
 			t.notify(nimAdd)
 			return 0
+		case msg == wmEndSession && wp != 0: // выход из системы или установщик
+			t.remove()
+			os.Exit(0)
 		}
 	}
 	r, _, _ := procDefWindowProcW.Call(hwnd, msg, wp, lp)

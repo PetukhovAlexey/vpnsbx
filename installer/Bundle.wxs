@@ -1,0 +1,22 @@
+<!--
+  vpnsbx-setup.exe: драйвер Windows Packet Filter (если его нет) и vpnsbx.msi.
+  MSI драйвера кладётся без изменений, вместе с его EULA (условие лицензии:
+  бесплатно для некоммерческого использования). Драйвер остаётся при удалении
+  VPN-песочницы — им могут пользоваться другие программы; удалить его можно
+  отдельно из «Приложений».
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="VPN-песочница" Manufacturer="vpnsbx" Version="$(Version)"
+          UpgradeCode="634db689-da20-448d-aa3e-6d5042318610"
+          IconSourceFile="$(sys.SOURCEFILEDIR)..\assets\icon.ico">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="rtfLicense" ShowVersion="yes"
+          LicenseFile="$(sys.SOURCEFILEDIR)WindowsPacketFilter-EULA.rtf" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage Id="WinpkFilter" SourceFile="$(DriverMsi)" Permanent="yes" Visible="yes" Vital="yes" />
+      <MsiPackage Id="vpnsbx" SourceFile="$(BinDir)\vpnsbx-$(Version).msi" Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>
