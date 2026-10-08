@@ -16,12 +16,17 @@ func usage() {
   vpnsbx tunnel test [-v] <файл>     поднять туннель в userspace и проверить внешний IP
   vpnsbx run --profile <файл> --rule <exe|папка>... [--adapter имя] [--for 30s] [-v]
                                      перенаправить трафик программ из правила в туннель
-  vpnsbx daemon                      служба: фильтр по %ProgramData%\vpnsbx\config.json
+  vpnsbx daemon                      служба в консоли: фильтр по %ProgramData%\vpnsbx\config.json
+                                     (служба Windows "vpnsbx" выполняет тот же код)
   vpnsbx ctl <команда> [json]        команда службе (status, procs, log, enable {"on":true}, …)`)
 	os.Exit(2)
 }
 
 func main() {
+	if isService() {
+		runService()
+		return
+	}
 	if len(os.Args) >= 2 {
 		cmds := map[string]func([]string) error{"run": runCmd, "daemon": daemonCmd, "ctl": ctlCmd}
 		if f, ok := cmds[os.Args[1]]; ok {

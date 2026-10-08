@@ -58,10 +58,19 @@ type daemon struct {
 	runErr atomic.Pointer[string] // почему движок остановился сам
 }
 
-// daemonCmd: vpnsbx daemon — служба: фильтр по config.json и команды по каналу.
+// daemonCmd: vpnsbx daemon — служба в консоли (для отладки; установленная
+// работает через SCM, см. service.go): фильтр по config.json и команды по каналу.
 func daemonCmd(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
 	fs.Parse(args)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return runDaemon(ctx.Done(), os.Stdout)
+}
+
+// runDaemon работает до закрытия stop или команды shutdown. console — куда
+// ещё дублировать лог (nil — никуда).
+func runDaemon(stop <-chan struct{}, console io.Writer) error {
 	if err := config.Ensure(); err != nil {
 		return fmt.Errorf("каталог %s: %w", config.Dir(), err)
 	}
@@ -77,7 +86,11 @@ func daemonCmd(args []string) error {
 	d := &daemon{ring: &ring{}}
 	// stdout последним: у отсоединённого процесса его нет, а MultiWriter
 	// останавливается на первой ошибке.
-	d.log = log.New(io.MultiWriter(d.ring, lf, os.Stdout), "", log.Ldate|log.Ltime)
+	w := []io.Writer{d.ring, lf}
+	if console != nil {
+		w = append(w, console)
+	}
+	d.log = log.New(io.MultiWriter(w...), "", log.Ldate|log.Ltime)
 
 	if d.srv, err = ipc.Listen(ipc.Pipe); err != nil {
 		return err
@@ -92,10 +105,8 @@ func daemonCmd(args []string) error {
 	}
 	d.mu.Unlock()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	go func() {
-		<-ctx.Done()
+		<-stop
 		d.srv.Close()
 	}()
 	err = d.srv.Serve(d.handle)

@@ -24,12 +24,26 @@ import (
 var page string
 
 func main() {
+	trayOnly := len(os.Args) > 1 && os.Args[1] == "--tray" // автозапуск: только значок
+	if _, err := windows.CreateMutex(nil, false, u16(`Local\vpnsbx-ui`)); err == windows.ERROR_ALREADY_EXISTS {
+		if !trayOnly {
+			showOther()
+		}
+		return
+	}
+	t := newTray()
+	if t != nil {
+		defer t.remove()
+		if trayOnly && !t.waitOpen() {
+			return
+		}
+	}
 	data := filepath.Join(os.Getenv("LOCALAPPDATA"), "vpnsbx", "webview")
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		DataPath:  data,
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
-			Title: "VPN-песочница", Width: 1100, Height: 780, Center: true,
+			Title: "VPN-песочница", Width: 1100, Height: 780, Center: true, IconId: 1,
 		},
 	})
 	if w == nil {
@@ -37,7 +51,6 @@ func main() {
 			u16("VPN-песочница"), windows.MB_ICONERROR)
 		os.Exit(1)
 	}
-	defer w.Destroy()
 	w.SetSize(900, 600, webview2.HintMin)
 	owner := uintptr(w.Window())
 
@@ -78,11 +91,51 @@ func main() {
 	w.Bind("dataDir", config.Dir)
 
 	w.SetHtml(page)
+	if t != nil {
+		t.attach(w)
+	}
 	w.Run()
 }
 
-// startDaemon запускает vpnsbx.exe daemon (лежит рядом) без окна и ждёт канал.
+// startService запускает установленную службу vpnsbx и ждёт канал.
+// handled=false — службы нет (запуск из папки сборки).
+func startService() (handled bool, err error) {
+	m, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return false, nil
+	}
+	defer windows.CloseServiceHandle(m)
+	s, err := windows.OpenService(m, u16("vpnsbx"), windows.SERVICE_START|windows.SERVICE_QUERY_STATUS)
+	if err == windows.ERROR_SERVICE_DOES_NOT_EXIST {
+		return false, nil
+	}
+	if err != nil {
+		return true, errors.New("служба vpnsbx: " + err.Error())
+	}
+	defer windows.CloseServiceHandle(s)
+	if err := windows.StartService(s, 0, nil); err != nil && err != windows.ERROR_SERVICE_ALREADY_RUNNING {
+		return true, errors.New("запуск службы vpnsbx: " + err.Error())
+	}
+	for i := 0; i < 100; i++ {
+		if ipc.Call("status", nil, nil) == nil {
+			return true, nil
+		}
+		var st windows.SERVICE_STATUS
+		if windows.QueryServiceStatus(s, &st) == nil && st.CurrentState == windows.SERVICE_STOPPED {
+			return true, errors.New("служба остановилась при запуске (см. " +
+				filepath.Join(config.Dir(), "daemon.log") + ")")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return true, errors.New("служба не ответила за 10 с")
+}
+
+// startDaemon запускает службу; если она не установлена — vpnsbx.exe daemon
+// (лежит рядом) без окна. Ждёт канал.
 func startDaemon() error {
+	if handled, err := startService(); handled {
+		return err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err

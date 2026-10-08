@@ -1,0 +1,60 @@
+<!--
+  VPN-песочница: служба vpnsbx (фильтр, LocalSystem, автозапуск) и окно
+  vpnsbx-ui (меню «Пуск», значок в трее при входе в систему).
+  Драйвер Windows Packet Filter не входит: его ставит пользователь.
+  Сборка: installer\build.cmd
+  Проверка: wix msi validate -sice ICE43 -sice ICE57 dist\vpnsbx-<версия>.msi
+  (ICE43/57 требуют ключ HKCU для ярлыка в «Пуске»; для perMachine это ложная тревога.)
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="VPN-песочница" Manufacturer="vpnsbx" Version="$(Version)"
+           UpgradeCode="87c9c292-b323-4cac-8179-fe7a55425bd0"
+           Language="1049" Codepage="1251" Scope="perMachine" InstallerVersion="500">
+    <SummaryInformation Description="VPN-песочница для процессов" Codepage="1251" />
+    <MajorUpgrade DowngradeErrorMessage="Уже установлена более новая версия VPN-песочницы." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="app.ico" SourceFile="$(sys.SOURCEFILEDIR)..\assets\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="app.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="VPN-песочница" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="VPN-песочница">
+      <ComponentRef Id="Service" />
+      <ComponentRef Id="UI" />
+      <ComponentRef Id="Autorun" />
+    </Feature>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="Service" Bitness="always64">
+        <File Id="vpnsbx.exe" Source="$(BinDir)\vpnsbx.exe" KeyPath="yes" />
+        <ServiceInstall Name="vpnsbx" DisplayName="VPN-песочница"
+                        Description="Направляет сеть программ из правил песочницы через выбранный VPN-профиль; без туннеля у них нет сети."
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Vital="yes">
+          <!-- Пользователи могут запускать службу из окна (по умолчанию — только администраторы). -->
+          <PermissionEx Sddl="D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)" />
+          <!-- Упала — перезапустить: без службы у программ песочницы нет сети. -->
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart" RestartServiceDelayInSeconds="3" ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="vpnsbx" Name="vpnsbx" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+
+      <Component Id="UI" Bitness="always64">
+        <File Id="vpnsbx_ui.exe" Source="$(BinDir)\vpnsbx-ui.exe" KeyPath="yes">
+          <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="VPN-песочница"
+                    Description="Правила, профили и процессы песочницы" WorkingDirectory="INSTALLFOLDER" />
+        </File>
+      </Component>
+
+      <Component Id="Autorun" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="VPN-песочница"
+                       Type="string" Value="&quot;[INSTALLFOLDER]vpnsbx-ui.exe&quot; --tray" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Package>
+</Wix>
