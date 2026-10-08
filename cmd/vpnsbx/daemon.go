@@ -131,7 +131,7 @@ func (d *daemon) startEngine() {
 		return
 	}
 	d.runErr.Store(nil)
-	e, err := engine.New(engine.Config{Log: d.log})
+	e, err := engine.New(engine.Config{Log: d.log, SandboxFile: filepath.Join(config.Dir(), "sandbox.json")})
 	if err != nil {
 		s := err.Error()
 		d.runErr.Store(&s)
@@ -236,7 +236,7 @@ func (d *daemon) handle(pid uint32, cmd string, raw json.RawMessage) (any, error
 			s.Tunnels = d.eng.Tunnels()
 			st := &d.eng.Stats
 			s.Stats = map[string]uint64{"out": st.Out.Load(), "toTunnel": st.ToTunnel.Load(),
-				"fromTunnel": st.FromTunnel.Load(), "blocked": st.Blocked.Load(), "dropped": st.Dropped.Load()}
+				"fromTunnel": st.FromTunnel.Load(), "blocked": st.Blocked.Load(), "dropped": st.Dropped.Load(), "deferred": st.Deferred.Load()}
 		}
 		return s, nil
 
@@ -419,6 +419,11 @@ func (d *daemon) handle(pid uint32, cmd string, raw json.RawMessage) (any, error
 		}
 		if !d.running() {
 			return nil, errors.New("фильтр не работает")
+		}
+		if cmd == "killRule" {
+			n, err := d.eng.KillRule(a.ID)
+			d.log.Printf("правило %s: завершено процессов %d", a.ID, n)
+			return n, err
 		}
 		n := 0
 		var errs []string

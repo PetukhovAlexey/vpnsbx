@@ -30,6 +30,9 @@ type Config struct {
 	Log     *log.Logger
 	Verbose bool
 
+	// Файл, где между запусками помнятся процессы песочницы ("" — нигде).
+	SandboxFile string
+
 	// Испытания: имитировать обрыв всех туннелей в окне [CutFrom, CutTo) от старта.
 	CutFrom, CutTo time.Duration
 }
@@ -167,7 +170,7 @@ type Engine struct {
 	inject chan frame // готовые Ethernet-кадры для стека
 
 	Stats struct {
-		Out, ToTunnel, FromTunnel, Blocked, Unknown, Dropped atomic.Uint64
+		Out, ToTunnel, FromTunnel, Blocked, Unknown, Dropped, Deferred atomic.Uint64
 	}
 }
 
@@ -215,7 +218,7 @@ func New(cfg Config) (*Engine, error) {
 		api.Close()
 		return nil, err
 	}
-	e.tracker = proc.NewTracker(nil)
+	e.tracker = proc.NewTracker(nil, e.log.Printf, e.cfg.SandboxFile)
 	return e, nil
 }
 
@@ -380,21 +383,24 @@ func (e *Engine) startTunnel(p ProfileSpec) *tunState {
 }
 
 // shutdown закрывает туннели, трекер и драйвер. Apply после него ничего не делает.
-func (e *Engine) shutdown() {
+// kill — фильтр упал сам: процессы песочницы завершаются, иначе их трафик
+// пошёл бы мимо туннеля.
+func (e *Engine) shutdown(kill bool) {
 	e.mu.Lock()
 	e.closed = true
 	for _, ts := range e.tunnels {
 		ts.close()
 	}
 	e.mu.Unlock()
-	e.tracker.Close()
+	e.tracker.Close(kill)
 	e.api.Close()
 }
 
 // Run фильтрует до отмены ctx. Профили и правила задаются Apply (до или
-// во время работы). После выхода движок непригоден.
+// во время работы). После выхода движок непригоден. Отмена ctx — штатная
+// остановка (процессы песочницы отпускаются), ошибка — их завершение.
 func (e *Engine) Run(ctx context.Context) error {
-	defer e.shutdown()
+	defer func() { e.shutdown(ctx.Err() == nil) }()
 	ev, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
 		return err
@@ -508,6 +514,11 @@ func (e *Engine) outgoing(b *A.IntermediateBuffer) bool {
 			return true // ICMP и прочее не атрибутируются
 		}
 		f = e.lookupFlow(&in, fr, b.HAdapterQLinkUnion.GetAdapter())
+		if f == nil {
+			// процесс ещё не разобран: молча отбрасываем, стек повторит
+			e.Stats.Deferred.Add(1)
+			return false
+		}
 		if in.Fragment {
 			e.mu.Lock()
 			e.fragsOut[fragKey{in.Src, in.Dst, in.ID, in.Proto}] = fragEnt{f, time.Now()}
@@ -551,6 +562,9 @@ func (e *Engine) lookupFlow(in *pkt.Info, fr []byte, ad A.Handle) *flow {
 	} else {
 		f.pid = pid
 		f.rule, _ = e.tracker.Matched(pid)
+		if f.rule == "" && e.tracker.Uncertain(pid) {
+			return nil
+		}
 	}
 	if f.rule != "" {
 		e.mu.Lock()
@@ -989,6 +1003,9 @@ func (e *Engine) Tunnels() []TunnelStatus {
 
 // Sandboxed — живые процессы под правилами.
 func (e *Engine) Sandboxed() []proc.Proc { return e.tracker.Sandboxed() }
+
+// KillRule завершает все процессы правила.
+func (e *Engine) KillRule(id string) (int, error) { return e.tracker.KillRule(id) }
 
 // RuleOf — ID правила процесса ("" — не в песочнице).
 func (e *Engine) RuleOf(pid uint32) string {
