@@ -1,7 +1,7 @@
 // Package engine — перехват исходящих пакетов драйвером NDISRD: трафик
-// процессов из правила уходит в AWG-туннель внутри процесса, остальное
-// проходит как есть. При обрыве туннеля процессы из правила не получают
-// никакой сети (включая LAN).
+// процессов из правил уходит в AWG-туннели внутри процесса (у каждого
+// профиля свой), остальное проходит как есть. Если туннель правила не
+// работает, процессы правила не получают никакой сети (включая LAN).
 package engine
 
 import (
@@ -26,14 +26,31 @@ import (
 )
 
 type Config struct {
-	AWG     *profile.AWG
-	Rules   *proc.Rules
-	Adapter string // имя адаптера; пусто — адаптер маршрута по умолчанию
+	Adapter string // имя адаптера; пусто — все подходящие
 	Log     *log.Logger
 	Verbose bool
 
-	// Испытания: имитировать обрыв туннеля в окне [CutFrom, CutTo) от старта.
+	// Испытания: имитировать обрыв всех туннелей в окне [CutFrom, CutTo) от старта.
 	CutFrom, CutTo time.Duration
+}
+
+// ProfileSpec — профиль AWG по ID. Text сравнивается при Apply: изменился —
+// туннель перезапускается.
+type ProfileSpec struct {
+	ID, Name, Text string
+}
+
+// RuleSpec — правило и ID профиля, через который идёт его трафик.
+// Профиля нет или туннель не поднят — сети у процессов правила нет.
+type RuleSpec struct {
+	proc.Rule
+	Profile string
+}
+
+// Setup — профили и правила; меняется на ходу через Apply.
+type Setup struct {
+	Profiles []ProfileSpec
+	Rules    []RuleSpec
 }
 
 // kind — куда направлять поток процесса из правила.
@@ -62,7 +79,8 @@ type natKey struct {
 }
 
 type flow struct {
-	rule   bool
+	rule   string    // ID правила ("" — не под правилом)
+	ts     *tunState // туннель правила (nil — профиля нет)
 	kind   kind
 	pid    uint32
 	key    flowKey
@@ -93,6 +111,40 @@ type fragEnt struct {
 	seen time.Time
 }
 
+// tunState — туннель одного профиля. Адреса известны из профиля сразу,
+// сам туннель поднимается в фоне (и переподнимается при ошибке).
+type tunState struct {
+	id, name, text string
+	addr4, addr6   netip.Addr
+	prefixes       []netip.Prefix
+	dns            []netip.Addr
+	dnsDst         netip.Addr // DNS туннеля для DNAT (IPv4)
+	mtu            int
+
+	tun     atomic.Pointer[tunnel.Tunnel]
+	healthy atomic.Bool
+	err     atomic.Pointer[string]
+	nat     map[natKey]*flow // под Engine.mu
+	stop    chan struct{}
+	once    sync.Once
+}
+
+func (ts *tunState) setErr(err error) {
+	if err == nil {
+		ts.err.Store(nil)
+		return
+	}
+	s := err.Error()
+	ts.err.Store(&s)
+}
+
+func (ts *tunState) close() {
+	ts.once.Do(func() {
+		close(ts.stop)
+		ts.healthy.Store(false)
+	})
+}
+
 type Engine struct {
 	cfg  Config
 	log  *log.Logger
@@ -100,19 +152,19 @@ type Engine struct {
 	ads  []adapter
 	nets []netip.Prefix // подсети адаптеров хоста (LAN)
 
-	tun     *tunnel.Tunnel
 	owners  *proc.Owners
 	tracker *proc.Tracker
-	dnsDst  netip.Addr
 
 	mu       sync.Mutex
+	closed   bool
+	gen      uint64               // растёт при каждом Apply
+	tunnels  map[string]*tunState // ID профиля → туннель
+	ruleTun  map[string]*tunState // ID правила → туннель (nil — профиля нет)
 	flows    map[flowKey]*flow
-	nat      map[natKey]*flow
 	fragsOut map[fragKey]fragEnt
 	fragsIn  map[fragKey]fragEnt
 
-	inject  chan frame // готовые Ethernet-кадры для стека
-	healthy atomic.Bool
+	inject chan frame // готовые Ethernet-кадры для стека
 
 	Stats struct {
 		Out, ToTunnel, FromTunnel, Blocked, Unknown, Dropped atomic.Uint64
@@ -142,8 +194,9 @@ func New(cfg Config) (*Engine, error) {
 	e := &Engine{
 		cfg:      cfg,
 		log:      cfg.Log,
+		tunnels:  map[string]*tunState{},
+		ruleTun:  map[string]*tunState{},
 		flows:    map[flowKey]*flow{},
-		nat:      map[natKey]*flow{},
 		fragsOut: map[fragKey]fragEnt{},
 		fragsIn:  map[fragKey]fragEnt{},
 		inject:   make(chan frame, 4096),
@@ -162,6 +215,7 @@ func New(cfg Config) (*Engine, error) {
 		api.Close()
 		return nil, err
 	}
+	e.tracker = proc.NewTracker(nil)
 	return e, nil
 }
 
@@ -221,24 +275,126 @@ func (e *Engine) AdapterNames() []string {
 	return out
 }
 
-// Run поднимает туннель и фильтрует до отмены ctx.
-func (e *Engine) Run(ctx context.Context) error {
-	defer e.api.Close()
-	t, err := tunnel.Start(e.cfg.AWG, e.fromTunnel, e.log)
-	if err != nil {
-		return err
+// Apply заменяет профили и правила на ходу. Туннели удалённых и изменённых
+// профилей закрываются, новые поднимаются в фоне. Потоки, у которых сменилось
+// правило или туннель, забываются: следующий пакет классифицируется заново.
+func (e *Engine) Apply(s Setup) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return
 	}
-	e.tun = t
-	defer t.Close()
-	for _, d := range t.DNS {
+	want := map[string]ProfileSpec{}
+	for _, p := range s.Profiles {
+		want[p.ID] = p
+	}
+	for id, ts := range e.tunnels {
+		if w, ok := want[id]; !ok || w.Text != ts.text {
+			ts.close()
+			delete(e.tunnels, id)
+			e.log.Printf("туннель %q закрыт", ts.name)
+		} else {
+			ts.name = w.Name
+		}
+	}
+	for _, p := range s.Profiles {
+		if e.tunnels[p.ID] == nil {
+			e.tunnels[p.ID] = e.startTunnel(p)
+		}
+	}
+
+	var rules []proc.Rule
+	e.ruleTun = map[string]*tunState{}
+	for _, r := range s.Rules {
+		rules = append(rules, r.Rule)
+		e.ruleTun[r.ID] = e.tunnels[r.Profile]
+	}
+	e.gen++
+	e.tracker.SetRules(proc.NewRules(rules))
+
+	dropped := 0
+	for k, f := range e.flows {
+		var rule string
+		if f.pid != 0 {
+			rule, _ = e.tracker.Matched(f.pid)
+		}
+		if rule == f.rule && (rule == "" || e.ruleTun[rule] == f.ts) {
+			continue
+		}
+		delete(e.flows, k)
+		if f.ts != nil {
+			nk := natKey{k.proto, k.src.Port(), f.remote}
+			if f.ts.nat[nk] == f {
+				delete(f.ts.nat, nk)
+			}
+		}
+		dropped++
+	}
+	e.log.Printf("применено: профилей %d, правил %d, потоков сброшено %d", len(s.Profiles), len(s.Rules), dropped)
+}
+
+func (e *Engine) startTunnel(p ProfileSpec) *tunState {
+	ts := &tunState{id: p.ID, name: p.Name, text: p.Text, nat: map[natKey]*flow{}, stop: make(chan struct{})}
+	a, err := profile.ParseAWG(p.Text)
+	if err != nil {
+		ts.setErr(err)
+		e.log.Printf("профиль %q: %v", p.Name, err)
+		return ts
+	}
+	ts.prefixes, ts.dns, ts.mtu = a.Addresses, a.DNS, a.MTU
+	for _, x := range a.Addresses {
+		if x.Addr().Is4() && !ts.addr4.IsValid() {
+			ts.addr4 = x.Addr()
+		}
+		if x.Addr().Is6() && !ts.addr6.IsValid() {
+			ts.addr6 = x.Addr()
+		}
+	}
+	for _, d := range a.DNS {
 		if d.Is4() {
-			e.dnsDst = d
+			ts.dnsDst = d
 			break
 		}
 	}
-	e.tracker = proc.NewTracker(e.cfg.Rules)
-	defer e.tracker.Close()
+	go func() {
+		for {
+			t, err := tunnel.Start(a, func(b []byte) { e.fromTunnel(ts, b) }, e.log)
+			if err == nil {
+				ts.setErr(nil)
+				ts.tun.Store(t)
+				e.log.Printf("туннель %q поднят", ts.name)
+				<-ts.stop
+				t.Close()
+				return
+			}
+			ts.setErr(err)
+			e.log.Printf("туннель %q: %v; повтор через 5 с", ts.name, err)
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ts.stop:
+				return
+			}
+		}
+	}()
+	return ts
+}
 
+// shutdown закрывает туннели, трекер и драйвер. Apply после него ничего не делает.
+func (e *Engine) shutdown() {
+	e.mu.Lock()
+	e.closed = true
+	for _, ts := range e.tunnels {
+		ts.close()
+	}
+	e.mu.Unlock()
+	e.tracker.Close()
+	e.api.Close()
+}
+
+// Run фильтрует до отмены ctx. Профили и правила задаются Apply (до или
+// во время работы). После выхода движок непригоден.
+func (e *Engine) Run(ctx context.Context) error {
+	defer e.shutdown()
 	ev, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
 		return err
@@ -265,21 +421,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	go e.injector(done)
 	go e.housekeeping(done)
 	if e.cfg.CutTo > e.cfg.CutFrom {
-		go func() {
-			start := time.Now()
-			for _, s := range []struct {
-				at  time.Duration
-				cut bool
-			}{{e.cfg.CutFrom, true}, {e.cfg.CutTo, false}} {
-				select {
-				case <-time.After(time.Until(start.Add(s.at))):
-				case <-done:
-					return
-				}
-				t.SetCut(s.cut)
-				e.log.Printf("ИСПЫТАНИЕ: имитация обрыва = %v", s.cut)
-			}
-		}()
+		go e.testCut(done)
 	}
 
 	bufs := make([]A.IntermediateBuffer, 256)
@@ -310,6 +452,28 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (e *Engine) testCut(done chan struct{}) {
+	start := time.Now()
+	for _, s := range []struct {
+		at  time.Duration
+		cut bool
+	}{{e.cfg.CutFrom, true}, {e.cfg.CutTo, false}} {
+		select {
+		case <-time.After(time.Until(start.Add(s.at))):
+		case <-done:
+			return
+		}
+		e.mu.Lock()
+		for _, ts := range e.tunnels {
+			if t := ts.tun.Load(); t != nil {
+				t.SetCut(s.cut)
+			}
+		}
+		e.mu.Unlock()
+		e.log.Printf("ИСПЫТАНИЕ: имитация обрыва = %v", s.cut)
+	}
 }
 
 // outgoing решает судьбу исходящего кадра. true — пропустить в сеть.
@@ -350,12 +514,12 @@ func (e *Engine) outgoing(b *A.IntermediateBuffer) bool {
 			e.mu.Unlock()
 		}
 	}
-	if !f.rule {
+	if f.rule == "" {
 		return true
 	}
 	f.last.Store(time.Now().UnixNano())
 
-	if !e.healthy.Load() || f.kind == kBlock {
+	if f.ts == nil || !f.ts.healthy.Load() || f.kind == kBlock {
 		e.block(ip, &in, f)
 		return false
 	}
@@ -372,6 +536,7 @@ func (e *Engine) lookupFlow(in *pkt.Info, fr []byte, ad A.Handle) *flow {
 	k := flowKey{in.Proto, netip.AddrPortFrom(in.Src, in.SrcPort), netip.AddrPortFrom(in.Dst, in.DstPort)}
 	e.mu.Lock()
 	f := e.flows[k]
+	gen := e.gen
 	e.mu.Unlock()
 	if f != nil {
 		return f
@@ -387,32 +552,44 @@ func (e *Engine) lookupFlow(in *pkt.Info, fr []byte, ad A.Handle) *flow {
 		f.pid = pid
 		f.rule, _ = e.tracker.Matched(pid)
 	}
-	if f.rule {
-		f.kind = e.classify(in)
+	if f.rule != "" {
+		e.mu.Lock()
+		f.ts = e.ruleTun[f.rule]
+		e.mu.Unlock()
+		f.kind = classify(in, f.ts, e.nets)
 		f.ad = ad
 		copy(f.gwM[:], fr[0:6])
 		copy(f.hostM[:], fr[6:12])
-		if f.kind == kDNS && e.dnsDst.IsValid() {
-			f.remote = netip.AddrPortFrom(e.dnsDst, in.DstPort)
+		if f.kind == kDNS {
+			f.remote = netip.AddrPortFrom(f.ts.dnsDst, in.DstPort)
 		}
-		e.log.Printf("pid %d %s: %s %s → %s",
-			pid, e.tracker.Path(pid), protoName(in.Proto), k.dst, f.kind)
+		name := "—"
+		if f.ts != nil {
+			name = f.ts.name
+		}
+		e.log.Printf("pid %d %s [%s]: %s %s → %s",
+			pid, e.tracker.Path(pid), name, protoName(in.Proto), k.dst, f.kind)
 	}
 	f.last.Store(time.Now().UnixNano())
 	e.mu.Lock()
-	if old := e.flows[k]; old != nil {
-		f = old
-	} else {
-		e.flows[k] = f
-		if f.rule && (f.kind == kTunnel || f.kind == kDNS) {
-			e.nat[natKey{in.Proto, in.SrcPort, f.remote}] = f
-		}
+	defer e.mu.Unlock()
+	if e.gen != gen {
+		return f // правила сменились, пока искали: поток не запоминаем
 	}
-	e.mu.Unlock()
+	if old := e.flows[k]; old != nil {
+		return old
+	}
+	e.flows[k] = f
+	if f.ts != nil && (f.kind == kTunnel || f.kind == kDNS) {
+		f.ts.nat[natKey{in.Proto, in.SrcPort, f.remote}] = f
+	}
 	return f
 }
 
-func (e *Engine) classify(in *pkt.Info) kind {
+func classify(in *pkt.Info, ts *tunState, nets []netip.Prefix) kind {
+	if ts == nil {
+		return kBlock
+	}
 	d := in.Dst
 	if in.V6 {
 		if in.DstPort == 53 {
@@ -423,23 +600,26 @@ func (e *Engine) classify(in *pkt.Info) kind {
 				return kLAN
 			}
 		}
-		if e.tun.Addr6.IsValid() {
+		if ts.addr6.IsValid() {
 			return kTunnel
 		}
 		return kBlock
 	}
-	for _, x := range e.tun.DNS {
+	if !ts.addr4.IsValid() {
+		return kBlock
+	}
+	for _, x := range ts.dns {
 		if x == d {
 			return kTunnel
 		}
 	}
 	if in.DstPort == 53 {
-		if e.dnsDst.IsValid() {
+		if ts.dnsDst.IsValid() {
 			return kDNS
 		}
 		return kTunnel
 	}
-	for _, p := range e.tun.Prefixes {
+	for _, p := range ts.prefixes {
 		if p.Masked().Contains(d) {
 			return kTunnel
 		}
@@ -449,7 +629,7 @@ func (e *Engine) classify(in *pkt.Info) kind {
 			return kLAN
 		}
 	}
-	for _, p := range e.nets {
+	for _, p := range nets {
 		if p.Contains(d) {
 			return kLAN
 		}
@@ -458,9 +638,10 @@ func (e *Engine) classify(in *pkt.Info) kind {
 }
 
 func (e *Engine) toTunnel(ip []byte, in *pkt.Info, f *flow) {
-	src := e.tun.Addr4
+	ts := f.ts
+	src := ts.addr4
 	if in.V6 {
-		src = e.tun.Addr6
+		src = ts.addr6
 	}
 	var dst netip.Addr
 	if f.kind == kDNS {
@@ -471,7 +652,7 @@ func (e *Engine) toTunnel(ip []byte, in *pkt.Info, f *flow) {
 		e.block(ip, in, f)
 		return
 	}
-	mtu := e.tun.MTU
+	mtu := ts.mtu
 	if in.Proto == pkt.ProtoTCP && in.FirstFrag {
 		f.markSyn(in.TCPFlags)
 		mss := mtu - 40
@@ -482,12 +663,12 @@ func (e *Engine) toTunnel(ip []byte, in *pkt.Info, f *flow) {
 	}
 	pkt.Rewrite(ip, in, src, dst)
 	if len(ip) <= mtu {
-		e.send(ip)
+		e.send(ts, ip)
 		return
 	}
 	if !in.V6 && !in.DF {
 		for _, fr := range pkt.Fragment4(ip, in, mtu) {
-			e.send(fr)
+			e.send(ts, fr)
 		}
 		return
 	}
@@ -496,8 +677,8 @@ func (e *Engine) toTunnel(ip []byte, in *pkt.Info, f *flow) {
 	e.toStack(f, pkt.Unreachable(ip, in, f.key.dst.Addr(), 4, uint16(mtu)))
 }
 
-func (e *Engine) send(p []byte) {
-	if e.tun.Send(p) {
+func (e *Engine) send(ts *tunState, p []byte) {
+	if t := ts.tun.Load(); t != nil && t.Send(p) {
 		e.Stats.ToTunnel.Add(1)
 	} else {
 		e.Stats.Dropped.Add(1)
@@ -580,10 +761,10 @@ func (e *Engine) injector(done chan struct{}) {
 }
 
 // fromTunnel — пакет от сервера: обратный NAT и в стек.
-func (e *Engine) fromTunnel(p []byte) {
+func (e *Engine) fromTunnel(ts *tunState, p []byte) {
 	e.Stats.FromTunnel.Add(1)
 	in, ok := pkt.Parse(p)
-	if !ok || (in.Dst != e.tun.Addr4 && in.Dst != e.tun.Addr6) {
+	if !ok || (in.Dst != ts.addr4 && in.Dst != ts.addr6) {
 		return
 	}
 	ip := append([]byte(nil), p[:in.TotalLen]...)
@@ -599,16 +780,16 @@ func (e *Engine) fromTunnel(p []byte) {
 		f = fe.f
 	case in.Proto == pkt.ProtoTCP || in.Proto == pkt.ProtoUDP:
 		e.mu.Lock()
-		f = e.nat[natKey{in.Proto, in.DstPort, netip.AddrPortFrom(in.Src, in.SrcPort)}]
+		f = ts.nat[natKey{in.Proto, in.DstPort, netip.AddrPortFrom(in.Src, in.SrcPort)}]
 		if f != nil && in.Fragment {
 			e.fragsIn[fragKey{in.Src, in.Dst, in.ID, in.Proto}] = fragEnt{f, time.Now()}
 		}
 		e.mu.Unlock()
 	case in.Proto == pkt.ProtoICMP || in.Proto == pkt.ProtoICMPv6:
-		e.icmpError(ip, &in)
+		e.icmpError(ts, ip, &in)
 		return
 	}
-	if f == nil || !e.healthy.Load() {
+	if f == nil || f.ts != ts || !ts.healthy.Load() {
 		return
 	}
 	var src netip.Addr
@@ -616,9 +797,9 @@ func (e *Engine) fromTunnel(p []byte) {
 		src = f.key.dst.Addr()
 	}
 	if in.Proto == pkt.ProtoTCP && in.FirstFrag {
-		mss := e.tun.MTU - 40
+		mss := ts.mtu - 40
 		if in.V6 {
-			mss = e.tun.MTU - 60
+			mss = ts.mtu - 60
 		}
 		pkt.ClampMSS(ip, &in, uint16(mss))
 	}
@@ -628,7 +809,7 @@ func (e *Engine) fromTunnel(p []byte) {
 
 // icmpError транслирует ICMP-ошибку из туннеля, вложенный пакет которой
 // принадлежит нашему потоку.
-func (e *Engine) icmpError(ip []byte, in *pkt.Info) {
+func (e *Engine) icmpError(ts *tunState, ip []byte, in *pkt.Info) {
 	l4 := ip[in.HdrLen:]
 	if len(l4) < 8 {
 		return
@@ -647,7 +828,7 @@ func (e *Engine) icmpError(ip []byte, in *pkt.Info) {
 		return
 	}
 	e.mu.Lock()
-	f := e.nat[natKey{ii.Proto, ii.SrcPort, netip.AddrPortFrom(ii.Dst, ii.DstPort)}]
+	f := ts.nat[natKey{ii.Proto, ii.SrcPort, netip.AddrPortFrom(ii.Dst, ii.DstPort)}]
 	e.mu.Unlock()
 	if f == nil {
 		return
@@ -713,7 +894,7 @@ func ipChecksum(h []byte) uint16 {
 	return ^uint16(s)
 }
 
-// housekeeping: состояние туннеля и чистка таблиц.
+// housekeeping: состояние туннелей и чистка таблиц.
 func (e *Engine) housekeeping(done chan struct{}) {
 	tk := time.NewTicker(500 * time.Millisecond)
 	defer tk.Stop()
@@ -724,12 +905,21 @@ func (e *Engine) housekeeping(done chan struct{}) {
 		case <-done:
 			return
 		}
-		h := e.tun.Healthy()
-		if e.healthy.Swap(h) != h {
-			if h {
-				e.log.Printf("туннель: связь есть")
-			} else {
-				e.log.Printf("туннель: связи нет — программам из правила сеть закрыта")
+		e.mu.Lock()
+		list := make([]*tunState, 0, len(e.tunnels))
+		for _, ts := range e.tunnels {
+			list = append(list, ts)
+		}
+		e.mu.Unlock()
+		for _, ts := range list {
+			t := ts.tun.Load()
+			h := t != nil && t.Healthy()
+			if ts.healthy.Swap(h) != h {
+				if h {
+					e.log.Printf("туннель %q: связь есть", ts.name)
+				} else {
+					e.log.Printf("туннель %q: связи нет — программам его правил сеть закрыта", ts.name)
+				}
 			}
 		}
 		if sweep++; sweep%20 != 0 {
@@ -743,13 +933,16 @@ func (e *Engine) housekeeping(done chan struct{}) {
 			if k.proto == pkt.ProtoUDP {
 				ttl = time.Minute
 			}
-			if f.rule && k.proto == pkt.ProtoTCP {
+			if f.rule != "" && k.proto == pkt.ProtoTCP {
 				ttl = 5 * time.Minute
 			}
 			if idle > ttl {
 				delete(e.flows, k)
-				if n := e.nat[natKey{k.proto, k.src.Port(), f.remote}]; n == f {
-					delete(e.nat, natKey{k.proto, k.src.Port(), f.remote})
+				if f.ts != nil {
+					nk := natKey{k.proto, k.src.Port(), f.remote}
+					if f.ts.nat[nk] == f {
+						delete(f.ts.nat, nk)
+					}
 				}
 			}
 		}
@@ -767,7 +960,41 @@ func (e *Engine) housekeeping(done chan struct{}) {
 	}
 }
 
-func (e *Engine) Healthy() bool { return e.healthy.Load() }
+// TunnelStatus — состояние туннеля профиля.
+type TunnelStatus struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Started bool      `json:"started"` // туннель поднят (ключи, сокет)
+	Up      bool      `json:"up"`      // от сервера есть ответы
+	Err     string    `json:"err,omitempty"`
+	LastRx  time.Time `json:"lastRx"`
+}
+
+func (e *Engine) Tunnels() []TunnelStatus {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []TunnelStatus
+	for _, ts := range e.tunnels {
+		s := TunnelStatus{ID: ts.id, Name: ts.name, Up: ts.healthy.Load()}
+		if t := ts.tun.Load(); t != nil {
+			s.Started, s.LastRx = true, t.LastRx()
+		}
+		if p := ts.err.Load(); p != nil {
+			s.Err = *p
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// Sandboxed — живые процессы под правилами.
+func (e *Engine) Sandboxed() []proc.Proc { return e.tracker.Sandboxed() }
+
+// RuleOf — ID правила процесса ("" — не в песочнице).
+func (e *Engine) RuleOf(pid uint32) string {
+	r, _ := e.tracker.Matched(pid)
+	return r
+}
 
 func protoName(p byte) string {
 	switch p {

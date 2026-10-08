@@ -25,7 +25,7 @@ func runCmd(args []string) error {
 	var rules multi
 	prof := fs.String("profile", "", "профиль AWG (.conf или vpn://)")
 	fs.Var(&rules, "rule", "exe или папка (можно несколько раз)")
-	adapter := fs.String("adapter", "", "адаптер (по умолчанию — маршрут по умолчанию)")
+	adapter := fs.String("adapter", "", "только этот адаптер (по умолчанию — все)")
 	dur := fs.Duration("for", 0, "остановиться через это время (0 — до Ctrl+C)")
 	verbose := fs.Bool("v", false, "подробный лог")
 	cutFrom := fs.Duration("test-cut-from", 0, "испытание: имитировать обрыв туннеля с этого момента")
@@ -41,20 +41,27 @@ func runCmd(args []string) error {
 	if p.Kind != profile.KindAWG {
 		return fmt.Errorf("%s: поддерживается только AWG/WireGuard", p.Name)
 	}
-	a, err := profile.ParseAWG(p.Text)
-	if err != nil {
+	if _, err := profile.ParseAWG(p.Text); err != nil {
 		return fmt.Errorf("%s: %w", p.Name, err)
 	}
-	r, err := proc.NewRules(rules)
-	if err != nil {
-		return err
+	var specs []engine.RuleSpec
+	for _, path := range rules {
+		r, err := proc.RuleFromPath("cli", path)
+		if err != nil {
+			return err
+		}
+		specs = append(specs, engine.RuleSpec{Rule: r, Profile: "cli"})
 	}
 	lg := log.New(os.Stdout, "", log.Ltime|log.Lmicroseconds)
-	e, err := engine.New(engine.Config{AWG: a, Rules: r, Adapter: *adapter, Log: lg, Verbose: *verbose,
+	e, err := engine.New(engine.Config{Adapter: *adapter, Log: lg, Verbose: *verbose,
 		CutFrom: *cutFrom, CutTo: *cutTo})
 	if err != nil {
 		return err
 	}
+	e.Apply(engine.Setup{
+		Profiles: []engine.ProfileSpec{{ID: "cli", Name: p.Name, Text: p.Text}},
+		Rules:    specs,
+	})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if *dur > 0 {
@@ -69,8 +76,12 @@ func runCmd(args []string) error {
 			select {
 			case <-tk.C:
 				s := &e.Stats
+				up := false
+				for _, t := range e.Tunnels() {
+					up = t.Up
+				}
 				lg.Printf("связь=%v исходящих=%d в туннель=%d из туннеля=%d блок=%d без владельца=%d потеряно=%d",
-					e.Healthy(), s.Out.Load(), s.ToTunnel.Load(), s.FromTunnel.Load(),
+					up, s.Out.Load(), s.ToTunnel.Load(), s.FromTunnel.Load(),
 					s.Blocked.Load(), s.Unknown.Load(), s.Dropped.Load())
 			case <-ctx.Done():
 				return

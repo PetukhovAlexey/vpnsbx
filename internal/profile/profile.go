@@ -56,13 +56,23 @@ func Load(path string) (*Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	text := string(bytes.TrimPrefix(raw, []byte("\xEF\xBB\xBF")))
-	name := safeName(path)
+	p, err := Parse(string(raw), safeName(path))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return p, nil
+}
 
+// Parse разбирает текст профиля (.conf, .ovpn или vpn://).
+func Parse(text, name string) (*Profile, error) {
+	text = strings.TrimPrefix(text, "\xEF\xBB\xBF")
+	if name == "" {
+		name = "vpn"
+	}
 	if strings.HasPrefix(strings.TrimSpace(text), "vpn://") {
 		p, err := fromAmneziaExport(text)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+			return nil, err
 		}
 		p.Name = name
 		return p, nil
@@ -73,7 +83,7 @@ func Load(path string) (*Profile, error) {
 	if reOpenVPN.MatchString(text) {
 		return &Profile{Name: name, Kind: KindOpenVPN, Text: text, Source: "ovpn"}, nil
 	}
-	return nil, fmt.Errorf("%s: не удалось определить формат профиля", path)
+	return nil, errors.New("не удалось определить формат профиля")
 }
 
 // DecodeAmneziaExport: vpn://<base64url(qCompress(json))>,

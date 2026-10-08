@@ -11,66 +11,89 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Rules — пути exe (точное совпадение) и папки (всё внутри, рекурсивно).
-type Rules struct {
-	exes    map[string]bool
-	folders []string // с завершающим \
+// Rule — путь exe (точное совпадение) или папка (всё внутри, рекурсивно),
+// ID — метка, которую получают процессы под правилом.
+type Rule struct {
+	ID     string
+	Path   string
+	Folder bool
 }
 
-// NewRules принимает пути к exe или папкам.
-func NewRules(paths []string) (*Rules, error) {
-	r := &Rules{exes: map[string]bool{}}
-	for _, p := range paths {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			return nil, err
-		}
-		st, err := os.Stat(abs)
-		if err != nil {
-			return nil, err
-		}
-		key := strings.ToLower(filepath.Clean(abs))
-		if st.IsDir() {
-			r.folders = append(r.folders, strings.TrimSuffix(key, `\`)+`\`)
+// RuleFromPath определяет по файловой системе, exe это или папка.
+func RuleFromPath(id, path string) (Rule, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return Rule{}, err
+	}
+	st, err := os.Stat(abs)
+	if err != nil {
+		return Rule{}, err
+	}
+	return Rule{ID: id, Path: filepath.Clean(abs), Folder: st.IsDir()}, nil
+}
+
+// Rules — набор правил. Точное совпадение exe сильнее папки,
+// из папок побеждает самая глубокая.
+type Rules struct {
+	exes    map[string]string // путь в нижнем регистре → ID
+	folders []folderRule
+}
+
+type folderRule struct {
+	prefix string // в нижнем регистре, с завершающим \
+	id     string
+}
+
+func NewRules(list []Rule) *Rules {
+	r := &Rules{exes: map[string]string{}}
+	for _, x := range list {
+		key := strings.ToLower(filepath.Clean(x.Path))
+		if x.Folder {
+			r.folders = append(r.folders, folderRule{strings.TrimSuffix(key, `\`) + `\`, x.ID})
 		} else {
-			r.exes[key] = true
+			r.exes[key] = x.ID
 		}
 	}
-	return r, nil
+	return r
 }
 
-func (r *Rules) Match(path string) bool {
-	if path == "" {
-		return false
+// Match возвращает ID правила для пути exe ("" — не под правилом).
+func (r *Rules) Match(path string) string {
+	if path == "" || r == nil {
+		return ""
 	}
 	k := strings.ToLower(path)
-	if r.exes[k] {
-		return true
+	if id, ok := r.exes[k]; ok {
+		return id
 	}
+	best, id := 0, ""
 	for _, f := range r.folders {
-		if strings.HasPrefix(k, f) {
-			return true
+		if len(f.prefix) > best && strings.HasPrefix(k, f.prefix) {
+			best, id = len(f.prefix), f.id
 		}
 	}
-	return false
+	return id
 }
 
 type procInfo struct {
 	parent  uint32
 	created int64 // FILETIME, 100 нс
 	path    string
-	matched bool
-	seen    time.Time // последний снимок, где процесс был жив
+	chain   []string // пути: свой, родителя, деда… (на момент появления)
+	linked  bool     // chain собрана
+	rule    string   // ID правила ("" — не под правилом)
+	seen    time.Time
 }
 
-// Tracker следит за деревом процессов: процесс под правилом, если его exe
-// подходит под правило или его родитель под правилом (и родитель старше,
-// т.е. PID родителя не переиспользован).
+// Tracker следит за деревом процессов. Процесс под правилом, если под
+// правилом его exe или exe любого предка (ближайший побеждает). Цепочка
+// предков запоминается при появлении процесса, поэтому смена правил
+// пересчитывается верно, даже если предки давно завершились.
 type Tracker struct {
-	rules *Rules
-	self  uint32
+	self uint32
 
 	mu      sync.Mutex
+	rules   *Rules
 	procs   map[uint32]*procInfo
 	updated time.Time
 	stop    chan struct{}
@@ -79,6 +102,8 @@ type Tracker struct {
 // Keep — сколько помнить завершившиеся процессы (их потомки ещё живы,
 // а пакеты ещё в пути).
 const Keep = 10 * time.Second
+
+const maxChain = 64
 
 func NewTracker(r *Rules) *Tracker {
 	t := &Tracker{rules: r, self: uint32(os.Getpid()), procs: map[uint32]*procInfo{}, stop: make(chan struct{})}
@@ -106,11 +131,22 @@ func (t *Tracker) loop() {
 	}
 }
 
-// Matched — подпадает ли PID под правило. Неизвестный PID вызывает
-// внеочередной снимок (не чаще раза в 5 мс). known=false — процесс не найден.
-func (t *Tracker) Matched(pid uint32) (matched, known bool) {
+// SetRules заменяет правила и пересчитывает все известные процессы.
+func (t *Tracker) SetRules(r *Rules) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.rules = r
+	for _, p := range t.procs {
+		p.rule = t.match(p.chain)
+	}
+}
+
+// Matched — ID правила для PID ("" — не под правилом). Неизвестный PID
+// вызывает внеочередной снимок (не чаще раза в 5 мс). known=false — процесс
+// не найден.
+func (t *Tracker) Matched(pid uint32) (rule string, known bool) {
 	if pid == t.self || pid == 0 || pid == 4 {
-		return false, true
+		return "", true
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -120,9 +156,9 @@ func (t *Tracker) Matched(pid uint32) (matched, known bool) {
 		p, ok = t.procs[pid]
 	}
 	if !ok {
-		return false, false
+		return "", false
 	}
-	return p.matched, true
+	return p.rule, true
 }
 
 // Path возвращает путь exe (для логов).
@@ -135,14 +171,22 @@ func (t *Tracker) Path(pid uint32) string {
 	return ""
 }
 
-// MatchedPIDs — все живые PID под правилом.
-func (t *Tracker) MatchedPIDs() []uint32 {
+// Proc — живой процесс под правилом.
+type Proc struct {
+	PID    uint32 `json:"pid"`
+	Parent uint32 `json:"parent"`
+	Path   string `json:"path"`
+	Rule   string `json:"rule"`
+}
+
+// Sandboxed — все живые процессы под правилами.
+func (t *Tracker) Sandboxed() []Proc {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var out []uint32
+	var out []Proc
 	for pid, p := range t.procs {
-		if p.matched && p.seen.Equal(t.updated) {
-			out = append(out, pid)
+		if p.rule != "" && p.seen.Equal(t.updated) {
+			out = append(out, Proc{pid, p.parent, p.path, p.rule})
 		}
 	}
 	return out
@@ -150,39 +194,29 @@ func (t *Tracker) MatchedPIDs() []uint32 {
 
 func (t *Tracker) refresh() {
 	now := time.Now()
-	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
-	if err != nil {
+	list := snapshot()
+	if list == nil {
 		return
 	}
-	defer windows.CloseHandle(snap)
-
-	type ent struct{ pid, parent uint32 }
-	var list []ent
-	var pe windows.ProcessEntry32
-	pe.Size = uint32(unsafe.Sizeof(pe))
-	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
-		list = append(list, ent{pe.ProcessID, pe.ParentProcessID})
-	}
-
 	var fresh []uint32
 	for _, e := range list {
-		p := t.procs[e.pid]
+		p := t.procs[e.PID]
 		if p != nil {
 			// тот же процесс, если совпадает родитель (PID мог переиспользоваться)
-			if p.parent == e.parent {
+			if p.parent == e.Parent {
 				p.seen = now
 				continue
 			}
-			delete(t.procs, e.pid)
+			delete(t.procs, e.PID)
 		}
-		path, created := query(e.pid)
-		t.procs[e.pid] = &procInfo{parent: e.parent, created: created, path: path, seen: now}
-		fresh = append(fresh, e.pid)
+		path, created := query(e.PID)
+		t.procs[e.PID] = &procInfo{parent: e.Parent, created: created, path: path, seen: now}
+		fresh = append(fresh, e.PID)
 	}
-	// Новые процессы: сортировка по времени создания не нужна — разрешаем
-	// цепочку рекурсивно через родителя.
+	// Новые процессы: цепочку собираем рекурсивно через родителя,
+	// поэтому порядок обхода не важен.
 	for _, pid := range fresh {
-		t.resolve(pid, 0)
+		t.link(pid, 0)
 	}
 	for pid, p := range t.procs {
 		if now.Sub(p.seen) > Keep {
@@ -192,27 +226,80 @@ func (t *Tracker) refresh() {
 	t.updated = now
 }
 
-func (t *Tracker) resolve(pid uint32, depth int) bool {
+// link собирает цепочку путей предков и вычисляет правило.
+func (t *Tracker) link(pid uint32, depth int) []string {
 	p := t.procs[pid]
 	if p == nil {
-		return false
+		return nil
 	}
-	if p.matched || depth > 64 {
-		return p.matched
+	if p.linked || depth > maxChain {
+		return p.chain
 	}
-	if pid == t.self {
-		return false
+	p.linked = true
+	p.chain = []string{p.path}
+	// родитель годится, только если он старше (иначе PID переиспользован)
+	if par := t.procs[p.parent]; par != nil && p.parent != pid && par.created != 0 && par.created <= p.created &&
+		p.parent != t.self {
+		pc := t.link(p.parent, depth+1)
+		if len(pc) > maxChain-1 {
+			pc = pc[:maxChain-1]
+		}
+		p.chain = append(p.chain, pc...)
 	}
-	if t.rules.Match(p.path) {
-		p.matched = true
-		return true
+	if pid != t.self {
+		p.rule = t.match(p.chain)
 	}
-	if par := t.procs[p.parent]; par != nil && p.parent != pid && par.created != 0 && par.created <= p.created {
-		if par.matched || t.resolve(p.parent, depth+1) {
-			p.matched = true
+	return p.chain
+}
+
+func (t *Tracker) match(chain []string) string {
+	for _, path := range chain {
+		if id := t.rules.Match(path); id != "" {
+			return id
 		}
 	}
-	return p.matched
+	return ""
+}
+
+// Entry — процесс из снимка системы.
+type Entry struct {
+	PID    uint32 `json:"pid"`
+	Parent uint32 `json:"parent"`
+	Path   string `json:"path,omitempty"`
+}
+
+func snapshot() []Entry {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil
+	}
+	defer windows.CloseHandle(snap)
+	var list []Entry
+	var pe windows.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		list = append(list, Entry{PID: pe.ProcessID, Parent: pe.ParentProcessID})
+	}
+	return list
+}
+
+// List — все процессы системы с путями exe (где путь доступен).
+func List() []Entry {
+	list := snapshot()
+	for i := range list {
+		list[i].Path, _ = query(list[i].PID)
+	}
+	return list
+}
+
+// Kill завершает процесс.
+func Kill(pid uint32) error {
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, pid)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	return windows.TerminateProcess(h, 1)
 }
 
 func query(pid uint32) (string, int64) {

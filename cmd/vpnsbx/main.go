@@ -15,17 +15,22 @@ func usage() {
   vpnsbx profile inspect <файл>...   структура профиля (секреты скрыты)
   vpnsbx tunnel test [-v] <файл>     поднять туннель в userspace и проверить внешний IP
   vpnsbx run --profile <файл> --rule <exe|папка>... [--adapter имя] [--for 30s] [-v]
-                                     перенаправить трафик программ из правила в туннель`)
+                                     перенаправить трафик программ из правила в туннель
+  vpnsbx daemon                      служба: фильтр по %ProgramData%\vpnsbx\config.json
+  vpnsbx ctl <команда> [json]        команда службе (status, procs, log, enable {"on":true}, …)`)
 	os.Exit(2)
 }
 
 func main() {
-	if len(os.Args) >= 2 && os.Args[1] == "run" {
-		if err := runCmd(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "ОШИБКА:", err)
-			os.Exit(1)
+	if len(os.Args) >= 2 {
+		cmds := map[string]func([]string) error{"run": runCmd, "daemon": daemonCmd, "ctl": ctlCmd}
+		if f, ok := cmds[os.Args[1]]; ok {
+			if err := f(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "ОШИБКА:", err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 	if len(os.Args) < 3 {
 		usage()
