@@ -13,11 +13,20 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `vpnsbx — песочница VPN для процессов
 
   vpnsbx profile inspect <файл>...   структура профиля (секреты скрыты)
-  vpnsbx tunnel test [-v] <файл>     поднять туннель в userspace и проверить внешний IP`)
+  vpnsbx tunnel test [-v] <файл>     поднять туннель в userspace и проверить внешний IP
+  vpnsbx run --profile <файл> --rule <exe|папка>... [--adapter имя] [--for 30s] [-v]
+                                     перенаправить трафик программ из правила в туннель`)
 	os.Exit(2)
 }
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "run" {
+		if err := runCmd(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "ОШИБКА:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) < 3 {
 		usage()
 	}

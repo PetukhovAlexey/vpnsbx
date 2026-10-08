@@ -6,6 +6,7 @@ require github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 
 require (
 	github.com/google/btree v1.1.3 // indirect
+	github.com/wiresock/ndisapi-go v1.0.1 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
