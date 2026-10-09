@@ -93,6 +93,8 @@ func main() {
 		async(w, id, func() (any, error) { return nil, startDaemon() })
 	})
 	w.Bind("dataDir", config.Dir)
+	w.Bind("loadState", loadUIState)
+	w.Bind("saveState", saveUIState)
 
 	w.SetHtml(page)
 	if t != nil {

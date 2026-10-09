@@ -33,7 +33,8 @@ tbody tr:hover { background: var(--hover); }
 td.path { min-width: 160px; }
 .muted { color: var(--muted); }
 .num { text-align: right; width: 1%; white-space: nowrap; }
-.act { text-align: right; width: 1%; }
+.act { text-align: right; width: 1%; white-space: nowrap; }
+@media (max-width: 960px) { .act { white-space: normal; } }
 .act button { white-space: nowrap; margin: 2px 0; }
 td select { max-width: 150px; }
 button, select, input[type=text], textarea { font: inherit; color: inherit; }
@@ -212,9 +213,20 @@ const badge = s => s ? `<span class="badge ${s.cls}" title="${esc(s.title || "")
 
 // ---- проверка профиля: внешний IP через туннель против прямого ----
 const checking = new Set();
+// Состояние страницы хранит Go (loadState/saveState): для страницы из
+// SetHtml WebView2 запрещает localStorage.
+let ui = {};
+async function loadUI() { try { ui = JSON.parse(await window.loadState() || "{}") || {}; } catch (e) { ui = {}; } }
+const store = {
+  get: k => ui[k] ?? null,
+  set(k, v) {
+    if (v == null) delete ui[k]; else ui[k] = v;
+    Promise.resolve(window.saveState(JSON.stringify(ui))).catch(() => {});
+  },
+};
 const chkKey = id => "check:" + id;
-function chkGet(id) { try { return JSON.parse(localStorage.getItem(chkKey(id)) || "null"); } catch (e) { return null; } }
-function chkSet(id, v) { if (v) localStorage.setItem(chkKey(id), JSON.stringify(v)); else localStorage.removeItem(chkKey(id)); }
+const chkGet = id => store.get(chkKey(id));
+const chkSet = (id, v) => store.set(chkKey(id), v);
 
 // chkVerdict: ok — туннель отвечает и адрес не совпал с настоящим; bad —
 // проверка провалилась или адрес совпал.
@@ -295,7 +307,7 @@ function renderStart() {
   const hasProf = st.profiles.length > 0;
   const target = hasProf ? defaultProfile() : "";
   const anyOK = st.profiles.some(p => chkOK(p.id));
-  const skipped = localStorage.getItem("check:skip") === "1";
+  const skipped = !!store.get("check:skip");
   const passed = anyOK || skipped;
   const step = (n, state, title, body) =>
     `<div class="step ${state}"><div class="n">${state === "done" ? "✓" : n}</div><div><h4>${title}</h4>${body}</div></div>`;
@@ -427,7 +439,11 @@ async function refresh() {
   } finally { refreshing = false; }
   // не перерисовывать, пока пользователь открыл выпадающий список
   if (document.activeElement && document.activeElement.tagName === "SELECT") { renderHeader(); return; }
-  renderHeader(); renderStart(); renderRules(); renderProcs(); renderProfiles(); refreshLog();
+  // сбой одного раздела не должен оставлять пустыми остальные
+  for (const f of [renderHeader, renderStart, renderRules, renderProcs, renderProfiles]) {
+    try { f(); } catch (e) { showErr("Ошибка интерфейса: " + (e && e.message || e)); }
+  }
+  refreshLog();
 }
 
 // ---- добавление правил ----
@@ -493,7 +509,7 @@ const actions = {
   checkProfile(b) { checkProfile(b.dataset.id); },
   skipCheck() {
     if (confirm("Продолжить без успешной проверки? Если профиль не меняет адрес, программы будут выходить в сеть с вашим настоящим IP.")) {
-      localStorage.setItem("check:skip", "1"); repaint(); refresh();
+      store.set("check:skip", true); repaint(); refresh();
     }
   },
   close: closeModals,
@@ -524,8 +540,7 @@ $("#rnName").addEventListener("keydown", e => { if (e.key === "Enter") actions.r
 $("#logBox").addEventListener("toggle", refreshLog);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModals(); });
 
-refresh();
-setInterval(refresh, 1000);
+loadUI().finally(() => { refresh(); setInterval(refresh, 1000); });
 </script>
 </body>
 </html>

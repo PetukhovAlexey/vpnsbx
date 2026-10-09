@@ -37,6 +37,17 @@ var ignoredInterfaceKeys = map[string]bool{
 	"saveconfig": true, "fwmark": true,
 }
 
+// PrivateKey — закрытый ключ интерфейса (hex) или "", если его нет.
+// Нужен только для сравнения профилей между собой.
+func (a *AWG) PrivateKey() string {
+	for _, kv := range a.device {
+		if kv[0] == "private_key" {
+			return kv[1]
+		}
+	}
+	return ""
+}
+
 func b64ToHex(v string, size int) (string, error) {
 	b, err := base64.StdEncoding.DecodeString(v)
 	if err != nil {

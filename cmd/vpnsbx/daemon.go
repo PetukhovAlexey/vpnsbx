@@ -398,8 +398,22 @@ func (d *daemon) handle(pid uint32, cmd string, raw json.RawMessage) (any, error
 		if p.Kind != profile.KindAWG {
 			return nil, fmt.Errorf("поддерживаются только AmneziaWG/WireGuard (это %s)", p.Kind)
 		}
-		if _, err := profile.ParseAWG(p.Text); err != nil {
+		awg, err := profile.ParseAWG(p.Text)
+		if err != nil {
 			return nil, err
+		}
+		// Два туннеля с одним ключом мешают друг другу: сервер помнит
+		// только один адрес пира, и связь переходит туда-обратно.
+		if k := awg.PrivateKey(); k != "" {
+			for _, q := range d.cfg.Profiles {
+				b, err := os.ReadFile(config.ProfilePath(q.ID))
+				if err != nil {
+					continue
+				}
+				if o, err := profile.ParseAWG(string(b)); err == nil && o.PrivateKey() == k {
+					return nil, fmt.Errorf("этот профиль уже добавлен: «%s»", q.Name)
+				}
+			}
 		}
 		if a.Name != "" {
 			p.Name = a.Name

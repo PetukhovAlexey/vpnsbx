@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"unsafe"
 
 	webview2 "github.com/jchv/go-webview2"
@@ -69,4 +71,28 @@ func async(w webview2.WebView, id int, f func() (any, error)) {
 		}
 		w.Dispatch(func() { w.Eval(js) })
 	}()
+}
+
+// Состояние страницы (результаты проверок профилей) — в файле у
+// пользователя: страница загружена через SetHtml, а для такого документа
+// WebView2 запрещает localStorage.
+func uiStatePath() string {
+	d, err := os.UserConfigDir()
+	if err != nil {
+		d = os.TempDir()
+	}
+	return filepath.Join(d, "vpnsbx", "ui-state.json")
+}
+
+func loadUIState() string {
+	b, _ := os.ReadFile(uiStatePath())
+	return string(b)
+}
+
+func saveUIState(s string) error {
+	p := uiStatePath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(s), 0o600)
 }
