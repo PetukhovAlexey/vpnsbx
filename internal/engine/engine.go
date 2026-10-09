@@ -92,7 +92,8 @@ type flow struct {
 	hostM  [6]byte        // MAC адаптера
 	gwM    [6]byte        // MAC шлюза (получатель исходного кадра)
 	last   atomic.Int64
-	syn    atomic.Bool // соединение начато при нас (видели SYN)
+	syn    atomic.Bool   // соединение начато при нас (видели SYN)
+	tgen   atomic.Uint64 // Tracker.Gen, при котором решено «не под правилом»
 }
 
 func (f *flow) markSyn(flags byte) {
@@ -152,20 +153,25 @@ type Engine struct {
 	cfg  Config
 	log  *log.Logger
 	api  *A.NdisApi
-	ads  []adapter
-	nets []netip.Prefix // подсети адаптеров хоста (LAN)
+	ev   windows.Handle                 // событие «есть пакеты» (все адаптеры)
+	nets atomic.Pointer[[]netip.Prefix] // подсети адаптеров хоста (LAN)
 
 	owners  *proc.Owners
 	tracker *proc.Tracker
 
 	mu       sync.Mutex
 	closed   bool
+	ads      []adapter            // адаптеры под фильтром (список меняется на ходу)
 	gen      uint64               // растёт при каждом Apply
 	tunnels  map[string]*tunState // ID профиля → туннель
 	ruleTun  map[string]*tunState // ID правила → туннель (nil — профиля нет)
 	flows    map[flowKey]*flow
 	fragsOut map[fragKey]fragEnt
 	fragsIn  map[fragKey]fragEnt
+	unknown  map[flowKey]time.Time // потоки без найденного владельца: когда впервые
+	unkLog   time.Time
+	probes   map[probeKey]chan []byte // проверки внешнего IP через туннель
+	defLog   time.Time
 
 	inject chan frame // готовые Ethernet-кадры для стека
 
@@ -202,9 +208,12 @@ func New(cfg Config) (*Engine, error) {
 		flows:    map[flowKey]*flow{},
 		fragsOut: map[fragKey]fragEnt{},
 		fragsIn:  map[fragKey]fragEnt{},
+		unknown:  map[flowKey]time.Time{},
+		probes:   map[probeKey]chan []byte{},
 		inject:   make(chan frame, 4096),
 		owners:   proc.NewOwners(),
 	}
+	e.nets.Store(&[]netip.Prefix{})
 	api, err := A.NewNdisApi()
 	if err != nil {
 		return nil, fmt.Errorf("драйвер NDISRD: %w", err)
@@ -214,7 +223,7 @@ func New(cfg Config) (*Engine, error) {
 		return nil, errors.New("драйвер NDISRD не загружен")
 	}
 	e.api = api
-	if err := e.pickAdapters(); err != nil {
+	if e.ev, err = windows.CreateEvent(nil, 1, 0, nil); err != nil {
 		api.Close()
 		return nil, err
 	}
@@ -232,45 +241,120 @@ type frame struct {
 	b  []byte
 }
 
-// pickAdapters выбирает адаптеры для фильтрации: все Ethernet (0) и IP (19,
-// VPN-адаптеры — драйвер подставляет для них Ethernet-заголовок с нулевыми
-// MAC, обработка та же). Иначе программа из правила при обрыве туннеля
-// дотянулась бы до LAN через неотфильтрованный адаптер.
-func (e *Engine) pickAdapters() error {
+// syncAdapters ставит под фильтр все Ethernet (0) и IP (19, VPN-адаптеры —
+// драйвер подставляет для них Ethernet-заголовок с нулевыми MAC, обработка
+// та же) адаптеры. Иначе программа из правила при обрыве туннеля дотянулась
+// бы до LAN через неотфильтрованный адаптер. Вызывается при старте и при
+// каждой смене списка адаптеров: адаптер, появившийся или перепривязанный
+// после старта (загрузка, выход из гибернации, VM, USB-модем), иначе
+// остался бы без фильтра — и трафик правил ушёл бы через него напрямую.
+func (e *Engine) syncAdapters() error {
 	list, err := e.api.GetTcpipBoundAdaptersInfo()
 	if err != nil {
 		return err
 	}
+	e.mu.Lock()
+	old := map[A.Handle]adapter{}
+	for _, a := range e.ads {
+		old[a.h] = a
+	}
+	e.mu.Unlock()
+	var ads []adapter
+	var errs []error
 	for i := 0; i < int(list.AdapterCount); i++ {
+		h := list.AdapterHandle[i]
 		name := e.api.ConvertWindows2000AdapterName(string(list.AdapterNameList[i][:]))
 		if e.cfg.Adapter != "" && name != e.cfg.Adapter {
 			continue
 		}
 		if m := list.AdapterMediumList[i]; m != 0 && m != 19 {
-			e.log.Printf("адаптер %q: среда %d не поддерживается, пропущен", name, m)
+			if _, ok := old[h]; !ok {
+				e.log.Printf("адаптер %q: среда %d не поддерживается, пропущен", name, m)
+			}
 			continue
 		}
-		e.ads = append(e.ads, adapter{list.AdapterHandle[i], name})
+		if a, ok := old[h]; ok {
+			ads = append(ads, a)
+			delete(old, h)
+			continue
+		}
+		if err := e.api.SetPacketEvent(h, e.ev); err != nil {
+			errs = append(errs, fmt.Errorf("SetPacketEvent %q: %w", name, err))
+			continue
+		}
+		if err := e.api.SetAdapterMode(&A.AdapterMode{AdapterHandle: h, Flags: A.MSTCP_FLAG_SENT_TUNNEL}); err != nil {
+			errs = append(errs, fmt.Errorf("SetAdapterMode %q: %w", name, err))
+			continue
+		}
+		e.log.Printf("адаптер %q под фильтром", name)
+		ads = append(ads, adapter{h, name})
 	}
-	if len(e.ads) == 0 {
-		return errors.New("нет адаптеров для фильтрации")
+	for _, a := range old {
+		e.log.Printf("адаптер %q пропал", a.name)
 	}
-	// подсети всех адаптеров хоста считаем LAN
+	e.mu.Lock()
+	e.ads = ads
+	e.mu.Unlock()
+	e.syncNets()
+	return errors.Join(errs...)
+}
+
+// syncNets: подсети всех адаптеров хоста считаем LAN.
+func (e *Engine) syncNets() {
+	nets := []netip.Prefix{}
 	ifs, _ := net.Interfaces()
 	for _, i := range ifs {
 		addrs, _ := i.Addrs()
 		for _, a := range addrs {
 			if n, ok := a.(*net.IPNet); ok {
 				if p, err := netip.ParsePrefix(n.String()); err == nil && !p.Addr().IsLoopback() {
-					e.nets = append(e.nets, p.Masked())
+					nets = append(nets, p.Masked())
 				}
 			}
 		}
 	}
-	return nil
+	e.nets.Store(&nets)
+}
+
+// watchAdapters следит за списком адаптеров: по событию драйвера и, на
+// всякий случай, раз в 2 с.
+func (e *Engine) watchAdapters(quit windows.Handle) {
+	ch, err := windows.CreateEvent(nil, 0, 0, nil)
+	if err == nil {
+		if err = e.api.SetAdapterListChangeEvent(ch); err != nil {
+			windows.CloseHandle(ch)
+			ch = 0
+		}
+	}
+	if err != nil {
+		e.log.Printf("события о смене адаптеров недоступны (%v): проверка раз в 2 с", err)
+	}
+	defer func() {
+		if ch != 0 {
+			e.api.SetAdapterListChangeEvent(0)
+			windows.CloseHandle(ch)
+		}
+	}()
+	wait := []windows.Handle{quit}
+	if ch != 0 {
+		wait = append(wait, ch)
+	}
+	var lastErr string
+	for {
+		if r, _ := windows.WaitForMultipleObjects(wait, false, 2000); r == windows.WAIT_OBJECT_0 {
+			return
+		}
+		err := e.syncAdapters()
+		if s := fmt.Sprint(err); err != nil && s != lastErr {
+			e.log.Printf("адаптеры: %v", err)
+		}
+		lastErr = fmt.Sprint(err)
+	}
 }
 
 func (e *Engine) AdapterNames() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	var out []string
 	for _, a := range e.ads {
 		out = append(out, a.name)
@@ -401,28 +485,42 @@ func (e *Engine) shutdown(kill bool) {
 // остановка (процессы песочницы отпускаются), ошибка — их завершение.
 func (e *Engine) Run(ctx context.Context) error {
 	defer func() { e.shutdown(ctx.Err() == nil) }()
-	ev, err := windows.CreateEvent(nil, 1, 0, nil)
-	if err != nil {
-		return err
-	}
+	ev := e.ev
 	defer windows.CloseHandle(ev)
 	defer func() {
+		e.mu.Lock()
 		for _, a := range e.ads {
 			e.api.SetAdapterMode(&A.AdapterMode{AdapterHandle: a.h, Flags: 0})
 			e.api.SetPacketEvent(a.h, 0)
 		}
+		e.ads = nil
+		e.mu.Unlock()
 	}()
-	for _, a := range e.ads {
-		if err := e.api.SetPacketEvent(a.h, ev); err != nil {
-			return fmt.Errorf("SetPacketEvent %q: %w", a.name, err)
-		}
-		if err := e.api.SetAdapterMode(&A.AdapterMode{AdapterHandle: a.h, Flags: A.MSTCP_FLAG_SENT_TUNNEL}); err != nil {
-			return fmt.Errorf("SetAdapterMode %q: %w", a.name, err)
-		}
+	err := e.syncAdapters()
+	if err != nil {
+		return err
 	}
-	e.log.Printf("фильтр включён на адаптерах: %d шт.", len(e.ads))
+	n := len(e.AdapterNames())
+	e.log.Printf("фильтр включён на адаптерах: %d шт.", n)
+	if n == 0 {
+		e.log.Printf("подходящих адаптеров пока нет: фильтр встанет на них, как только появятся")
+	}
 
 	done := make(chan struct{})
+	quit, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		return err
+	}
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		e.watchAdapters(quit)
+	}()
+	defer func() {
+		windows.SetEvent(quit)
+		<-watched // иначе он мог бы включить адаптер после снятия фильтра
+		windows.CloseHandle(quit)
+	}()
 	defer close(done)
 	go e.injector(done)
 	go e.housekeeping(done)
@@ -545,24 +643,46 @@ func (e *Engine) outgoing(b *A.IntermediateBuffer) bool {
 
 func (e *Engine) lookupFlow(in *pkt.Info, fr []byte, ad A.Handle) *flow {
 	k := flowKey{in.Proto, netip.AddrPortFrom(in.Src, in.SrcPort), netip.AddrPortFrom(in.Dst, in.DstPort)}
+	tgen := e.tracker.Gen()
 	e.mu.Lock()
 	f := e.flows[k]
 	gen := e.gen
+	noRules := len(e.ruleTun) == 0
 	e.mu.Unlock()
 	if f != nil {
-		return f
+		if f.rule != "" || f.tgen.Load() == tgen {
+			return f
+		}
+		// у каких-то процессов сменилось правило: «не под правилом»
+		// перепроверить, иначе поток так и шёл бы мимо туннеля
+		if f.pid == 0 || e.stillOutside(f.pid) {
+			f.tgen.Store(tgen)
+			return f
+		}
+		e.forget(k, f)
+		e.log.Printf("pid %d %s: поток %s %s→%s теперь под правилом, разбирается заново",
+			f.pid, e.tracker.Path(f.pid), protoName(in.Proto), k.src, k.dst)
 	}
 	f = &flow{key: k, remote: k.dst}
+	f.tgen.Store(tgen)
 	pid, ok := e.owners.Lookup(in.Proto, k.src, k.dst)
 	if !ok {
 		e.Stats.Unknown.Add(1)
-		if e.cfg.Verbose {
-			e.log.Printf("владелец не найден: %s %s→%s", protoName(in.Proto), k.src, k.dst)
+		if !noRules && !e.unknownExpired(k, in) {
+			return nil // владелец ещё не найден: отбросить, стек повторит
 		}
 	} else {
 		f.pid = pid
-		f.rule, _ = e.tracker.Matched(pid)
-		if f.rule == "" && e.tracker.Uncertain(pid) {
+		var known bool
+		f.rule, known = e.tracker.Matched(pid)
+		if f.rule == "" && !noRules && (!known || e.tracker.Uncertain(pid)) {
+			e.mu.Lock()
+			if time.Since(e.defLog) > 10*time.Second {
+				e.defLog = time.Now()
+				e.log.Printf("pid %d %q: правило пока не определить, пакеты отбрасываются (в журнал — не чаще раза в 10 с)",
+					pid, e.tracker.Path(pid))
+			}
+			e.mu.Unlock()
 			return nil
 		}
 	}
@@ -570,7 +690,7 @@ func (e *Engine) lookupFlow(in *pkt.Info, fr []byte, ad A.Handle) *flow {
 		e.mu.Lock()
 		f.ts = e.ruleTun[f.rule]
 		e.mu.Unlock()
-		f.kind = classify(in, f.ts, e.nets)
+		f.kind = classify(in, f.ts, *e.nets.Load())
 		f.ad = ad
 		copy(f.gwM[:], fr[0:6])
 		copy(f.hostM[:], fr[6:12])
@@ -598,6 +718,53 @@ func (e *Engine) lookupFlow(in *pkt.Info, fr []byte, ad A.Handle) *flow {
 		f.ts.nat[natKey{in.Proto, in.SrcPort, f.remote}] = f
 	}
 	return f
+}
+
+// stillOutside — процесс по-прежнему точно не под правилом.
+func (e *Engine) stillOutside(pid uint32) bool {
+	rule, known := e.tracker.Matched(pid)
+	return rule == "" && known && !e.tracker.Uncertain(pid)
+}
+
+// forget убирает поток из таблиц: следующий пакет разбирается заново.
+func (e *Engine) forget(k flowKey, f *flow) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.flows[k] == f {
+		delete(e.flows, k)
+	}
+	if f.ts != nil {
+		nk := natKey{k.proto, k.src.Port(), f.remote}
+		if f.ts.nat[nk] == f {
+			delete(f.ts.nat, nk)
+		}
+	}
+}
+
+// unknownExpired: владельца пакета нет в таблицах TCP/UDP. Сокет программы
+// попадает туда раньше её первого пакета, так что промах — либо гонка
+// (пакет отбрасывается, повтор найдёт владельца), либо пакет не от сокета
+// (транзит WinNAT/ICS, ядро). Поток пропускается как чужой, только если и
+// через 500 мс владельца нет.
+func (e *Engine) unknownExpired(k flowKey, in *pkt.Info) bool {
+	now := time.Now()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	first, ok := e.unknown[k]
+	if !ok {
+		e.unknown[k] = now
+		return false
+	}
+	if now.Sub(first) < 500*time.Millisecond {
+		return false
+	}
+	delete(e.unknown, k)
+	if now.Sub(e.unkLog) > 10*time.Second {
+		e.unkLog = now
+		e.log.Printf("владелец не найден и через %v: %s %s→%s пропущен как трафик не от программ (в журнал — не чаще раза в 10 с)",
+			now.Sub(first).Round(time.Millisecond), protoName(in.Proto), k.src, k.dst)
+	}
+	return true
 }
 
 func classify(in *pkt.Info, ts *tunState, nets []netip.Prefix) kind {
@@ -794,6 +961,10 @@ func (e *Engine) fromTunnel(ts *tunState, p []byte) {
 		f = fe.f
 	case in.Proto == pkt.ProtoTCP || in.Proto == pkt.ProtoUDP:
 		e.mu.Lock()
+		if e.probeReply(&in, ip) {
+			e.mu.Unlock()
+			return
+		}
 		f = ts.nat[natKey{in.Proto, in.DstPort, netip.AddrPortFrom(in.Src, in.SrcPort)}]
 		if f != nil && in.Fragment {
 			e.fragsIn[fragKey{in.Src, in.Dst, in.ID, in.Proto}] = fragEnt{f, time.Now()}
@@ -968,6 +1139,11 @@ func (e *Engine) housekeeping(done chan struct{}) {
 		for k, v := range e.fragsIn {
 			if now.Sub(v.seen) > 30*time.Second {
 				delete(e.fragsIn, k)
+			}
+		}
+		for k, t := range e.unknown {
+			if now.Sub(t) > 30*time.Second {
+				delete(e.unknown, k)
 			}
 		}
 		e.mu.Unlock()

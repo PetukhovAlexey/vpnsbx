@@ -5,7 +5,7 @@ rem   dotnet tool install --global wix --version "6.*"
 rem   wix extension add -g WixToolset.Util.wixext/6.0.2
 rem   wix extension add -g WixToolset.BootstrapperApplications.wixext/6.0.2
 setlocal
-set VERSION=0.1.1
+set VERSION=0.1.2
 set DRIVER=Windows.Packet.Filter.3.6.2.1.x64.msi
 set DRIVER_URL=https://github.com/wiresock/ndisapi/releases/download/v3.6.2/%DRIVER%
 set DRIVER_SHA256=9c388c0b7f189f7fa98720bae2caecf7d64f30910838b80b438ecf8956b8502c

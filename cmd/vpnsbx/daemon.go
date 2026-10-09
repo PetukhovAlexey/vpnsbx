@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"vpnsbx/internal/config"
 	"vpnsbx/internal/engine"
@@ -50,12 +51,13 @@ type daemon struct {
 	ring *ring
 	srv  *ipc.Server
 
-	mu     sync.Mutex
-	cfg    *config.Config
-	eng    *engine.Engine
-	cancel context.CancelFunc
-	done   chan struct{}
-	runErr atomic.Pointer[string] // почему движок остановился сам
+	mu       sync.Mutex
+	cfg      *config.Config
+	eng      *engine.Engine
+	cancel   context.CancelFunc
+	done     chan struct{}
+	runErr   atomic.Pointer[string] // почему движок остановился сам
+	quitting bool                   // служба останавливается: фильтр не перезапускать
 }
 
 // daemonCmd: vpnsbx daemon — служба в консоли (для отладки; установленная
@@ -109,8 +111,10 @@ func runDaemon(stop <-chan struct{}, console io.Writer) error {
 		<-stop
 		d.srv.Close()
 	}()
+	go d.keepEngine()
 	err = d.srv.Serve(d.handle)
 	d.mu.Lock()
+	d.quitting = true
 	d.stopEngine()
 	d.mu.Unlock()
 	d.log.Printf("служба остановлена")
@@ -136,17 +140,36 @@ func (d *daemon) running() bool {
 	}
 }
 
+// keepEngine перезапускает фильтр, если защита включена, а он не работает:
+// при загрузке драйвер мог ещё не подняться, фильтр мог упасть.
+func (d *daemon) keepEngine() {
+	for {
+		time.Sleep(5 * time.Second)
+		d.mu.Lock()
+		if d.quitting {
+			d.mu.Unlock()
+			return
+		}
+		if d.cfg.Enabled && !d.running() {
+			d.startEngine()
+		}
+		d.mu.Unlock()
+	}
+}
+
 // startEngine — под d.mu.
 func (d *daemon) startEngine() {
 	if d.running() {
 		return
 	}
-	d.runErr.Store(nil)
+	prev := d.runErr.Swap(nil)
 	e, err := engine.New(engine.Config{Log: d.log, SandboxFile: filepath.Join(config.Dir(), "sandbox.json")})
 	if err != nil {
 		s := err.Error()
 		d.runErr.Store(&s)
-		d.log.Printf("фильтр не запущен: %v", err)
+		if prev == nil || *prev != s { // повторы раз в 5 с — в журнал один раз
+			d.log.Printf("фильтр не запущен: %v (повтор каждые 5 с)", err)
+		}
 		return
 	}
 	e.Apply(d.setup())
@@ -217,12 +240,83 @@ type status struct {
 	PID      int                   `json:"pid"`
 }
 
+// profileCheck — внешний IP через туннель профиля и напрямую: если они
+// совпадают, VPN адрес не меняет.
+type profileCheck struct {
+	VPN       string `json:"vpn,omitempty"`
+	VPNErr    string `json:"vpnErr,omitempty"`
+	Direct    string `json:"direct,omitempty"`
+	DirectErr string `json:"directErr,omitempty"`
+}
+
+func (d *daemon) checkProfile(pid uint32, raw json.RawMessage) (any, error) {
+	var a struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	eng := d.eng
+	if !d.running() {
+		eng = nil
+	}
+	name := ""
+	if p := d.cfg.Profile(a.ID); p != nil {
+		name = p.Name
+	}
+	d.mu.Unlock()
+	if eng != nil && eng.RuleOf(pid) != "" {
+		return nil, errors.New("команды из песочницы запрещены")
+	}
+	if name == "" {
+		return nil, errors.New("профиль не найден")
+	}
+	if eng == nil {
+		return nil, errors.New("фильтр не работает: включите защиту")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	var r profileCheck
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if ip, err := eng.ExternalIP(ctx, a.ID); err != nil {
+			r.VPNErr = err.Error()
+		} else {
+			r.VPN = ip.String()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if ip, err := engine.DirectIP(ctx); err != nil {
+			r.DirectErr = err.Error()
+		} else {
+			r.Direct = ip.String()
+		}
+	}()
+	wg.Wait()
+	switch {
+	case r.VPNErr != "":
+		d.log.Printf("проверка профиля %q: через туннель — %s", name, r.VPNErr)
+	case r.VPN == r.Direct:
+		d.log.Printf("проверка профиля %q: адрес через туннель совпадает с прямым", name)
+	default:
+		d.log.Printf("проверка профиля %q: адрес через туннель отличается от прямого", name)
+	}
+	return r, nil
+}
+
 type procView struct {
 	proc.Proc
 	Profile string `json:"profile"`
 }
 
 func (d *daemon) handle(pid uint32, cmd string, raw json.RawMessage) (any, error) {
+	if cmd == "checkProfile" {
+		return d.checkProfile(pid, raw) // долго: без d.mu
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.running() && d.eng.RuleOf(pid) != "" {
@@ -247,7 +341,8 @@ func (d *daemon) handle(pid uint32, cmd string, raw json.RawMessage) (any, error
 			s.Tunnels = d.eng.Tunnels()
 			st := &d.eng.Stats
 			s.Stats = map[string]uint64{"out": st.Out.Load(), "toTunnel": st.ToTunnel.Load(),
-				"fromTunnel": st.FromTunnel.Load(), "blocked": st.Blocked.Load(), "dropped": st.Dropped.Load(), "deferred": st.Deferred.Load()}
+				"fromTunnel": st.FromTunnel.Load(), "blocked": st.Blocked.Load(), "dropped": st.Dropped.Load(), "deferred": st.Deferred.Load(),
+				"unknown": st.Unknown.Load()}
 		}
 		return s, nil
 

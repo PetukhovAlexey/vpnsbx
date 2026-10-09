@@ -51,20 +51,22 @@ func main() {
 			u16("VPN-песочница"), windows.MB_ICONERROR)
 		os.Exit(1)
 	}
-	w.SetSize(900, 600, webview2.HintMin)
+	fitWindow(w, 1100, 780, 760, 520)
 	owner := uintptr(w.Window())
 
-	w.Bind("call", func(cmd string, args json.RawMessage) (json.RawMessage, error) {
-		var out json.RawMessage
-		var a any
-		if len(args) > 0 && string(args) != "null" {
-			a = args
-		}
-		err := ipc.Call(cmd, a, &out)
-		if errors.Is(err, ipc.ErrNotRunning) {
-			return nil, errors.New("NOT_RUNNING")
-		}
-		return out, err
+	w.Bind("callAsync", func(id int, cmd string, args json.RawMessage) {
+		async(w, id, func() (any, error) {
+			var out json.RawMessage
+			var a any
+			if len(args) > 0 && string(args) != "null" {
+				a = args
+			}
+			err := ipc.Call(cmd, a, &out)
+			if errors.Is(err, ipc.ErrNotRunning) {
+				return nil, errors.New("NOT_RUNNING")
+			}
+			return out, err
+		})
 	})
 	w.Bind("pickExe", func() (string, error) {
 		return openDialog(owner, "Программа для песочницы", false,
@@ -87,7 +89,9 @@ func main() {
 		}
 		return out
 	})
-	w.Bind("startDaemon", startDaemon)
+	w.Bind("startDaemonAsync", func(id int) {
+		async(w, id, func() (any, error) { return nil, startDaemon() })
+	})
 	w.Bind("dataDir", config.Dir)
 
 	w.SetHtml(page)

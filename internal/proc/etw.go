@@ -3,7 +3,9 @@ package proc
 import (
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -240,27 +242,55 @@ func propString(rec *eventRecord, name string) string {
 	return windows.UTF16ToString(buf)
 }
 
-// ntToDos: \Device\HarddiskVolume3\x → C:\x.
+// ntToDos: \Device\HarddiskVolume3\x → C:\x, \Device\Mup\srv\x → \\srv\x.
+// Не удалось — путь остаётся NT-путём (см. unresolved). Таблица томов
+// перечитывается при промахе: диск мог появиться после её построения.
 func ntToDos(p string) string {
 	if !strings.HasPrefix(p, `\Device\`) {
 		return p
 	}
-	for _, m := range devMap() {
-		if strings.HasPrefix(strings.ToLower(p), strings.ToLower(m.dev)+`\`) {
-			return m.drive + p[len(m.dev):]
-		}
+	if s, ok := devLookup(p, false); ok {
+		return s
+	}
+	if s, ok := devLookup(p, true); ok {
+		return s
 	}
 	return p
 }
 
+// unresolved — путь exe неизвестен или не в виде C:\… / \\srv\…:
+// правило с ним не сравнить.
+func unresolved(p string) bool {
+	return p == "" || (strings.HasPrefix(p, `\`) && !strings.HasPrefix(p, `\\`))
+}
+
 type devDrive struct{ dev, drive string }
 
-var devs []devDrive
+var (
+	devMu    sync.Mutex
+	devs     []devDrive
+	devBuilt time.Time
+)
+
+func devLookup(p string, rebuild bool) (string, bool) {
+	devMu.Lock()
+	defer devMu.Unlock()
+	if devs == nil || (rebuild && time.Since(devBuilt) > time.Second) {
+		devs, devBuilt = devMap(), time.Now()
+	} else if rebuild {
+		return "", false
+	}
+	lp := strings.ToLower(p)
+	for _, m := range devs {
+		if strings.HasPrefix(lp, strings.ToLower(m.dev)+`\`) {
+			return m.drive + p[len(m.dev):], true
+		}
+	}
+	return "", false
+}
 
 func devMap() []devDrive {
-	if devs != nil {
-		return devs
-	}
+	list := []devDrive{{`\Device\Mup`, `\`}}
 	buf := make([]uint16, 512)
 	for c := 'A'; c <= 'Z'; c++ {
 		d := string(c) + ":"
@@ -269,10 +299,7 @@ func devMap() []devDrive {
 		if err != nil || n == 0 {
 			continue
 		}
-		devs = append(devs, devDrive{windows.UTF16ToString(buf[:n]), d})
+		list = append(list, devDrive{windows.UTF16ToString(buf[:n]), d})
 	}
-	if devs == nil {
-		devs = []devDrive{}
-	}
-	return devs
+	return list
 }

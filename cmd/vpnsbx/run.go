@@ -88,7 +88,7 @@ func runCmd(args []string) error {
 			}
 		}
 	}()
-	lg.Printf("профиль %s, адаптеры: %q", p.Name, e.AdapterNames())
+	lg.Printf("профиль %s", p.Name)
 	err = e.Run(ctx)
 	lg.Printf("фильтр снят")
 	return err

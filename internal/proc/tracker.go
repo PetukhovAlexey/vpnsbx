@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -57,6 +58,11 @@ func NewRules(list []Rule) *Rules {
 		}
 	}
 	return r
+}
+
+// Empty — правил нет.
+func (r *Rules) Empty() bool {
+	return r == nil || (len(r.exes) == 0 && len(r.folders) == 0)
 }
 
 // Match возвращает ID правила для пути exe ("" — не под правилом).
@@ -116,6 +122,19 @@ type Tracker struct {
 	portDone chan struct{}
 	jobs     map[uintptr]*job
 	lastKey  uintptr
+
+	gen atomic.Uint64 // растёт, когда у какого-либо процесса меняется правило
+}
+
+// Gen растёт при каждой смене правила у любого процесса: решения «не под
+// правилом», принятые раньше, надо перепроверить.
+func (t *Tracker) Gen() uint64 { return t.gen.Load() }
+
+func (t *Tracker) setRule(p *procInfo, rule string) {
+	if p.rule != rule {
+		p.rule = rule
+		t.gen.Add(1)
+	}
 }
 
 // Keep — сколько помнить завершившиеся процессы (их потомки ещё живы,
@@ -241,17 +260,26 @@ func (t *Tracker) relinkAll() {
 	t.ensureJobs()
 }
 
-// Uncertain — процесс не под правилом, но только что запущен, а его
-// родитель неизвестен: возможно, ETW ещё не сообщил о посреднике. Его
-// пакеты лучше отбросить (TCP и DNS повторят), чем выпустить мимо туннеля.
+// Uncertain — процесс не под правилом, но решить это наверняка нельзя:
+//   - путь его exe неизвестен (правило не сравнить), пока правила есть;
+//   - только что запущен, а его родитель неизвестен: возможно, ETW ещё не
+//     сообщил о посреднике.
+//
+// Его пакеты лучше отбросить (TCP и DNS повторят), чем выпустить мимо туннеля.
 func (t *Tracker) Uncertain(pid uint32) bool {
-	if t.etw == nil {
+	if pid == t.self || pid == 0 || pid == 4 {
 		return false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	p := t.procs[pid]
-	if p == nil || p.rule != "" || !p.orphan || p.created == 0 {
+	if p == nil || p.rule != "" {
+		return false
+	}
+	if !t.rules.Empty() && (unresolved(p.path) || ntChain(p.chain)) {
+		return true
+	}
+	if t.etw == nil || !p.orphan || p.created == 0 {
 		return false
 	}
 	ft := windows.Filetime{LowDateTime: uint32(p.created), HighDateTime: uint32(p.created >> 32)}
@@ -321,8 +349,11 @@ func (t *Tracker) joined(key uintptr, pid uint32) {
 	if p.job == nil || p.job.key < key {
 		p.job = j
 	}
-	if p.linked {
-		p.rule = t.resolve(p)
+	if unresolved(p.path) && !unresolved(path) {
+		p.path = path
+		t.relinkAll()
+	} else if p.linked {
+		t.setRule(p, t.resolve(p))
 	} else {
 		t.link(pid, 0)
 	}
@@ -364,8 +395,9 @@ func (t *Tracker) SetRules(r *Rules) {
 			p.job = nil
 		}
 		p.tried = false
-		p.rule = t.resolve(p)
+		t.setRule(p, t.resolve(p))
 	}
+	t.gen.Add(1)
 	t.ensureJobs()
 }
 
@@ -456,12 +488,16 @@ func (t *Tracker) refresh() {
 		return
 	}
 	var fresh []uint32
+	relink := false
 	for _, e := range list {
 		p := t.procs[e.PID]
 		if p != nil {
 			// тот же процесс, если совпадает родитель (PID мог переиспользоваться)
 			if p.parent == e.Parent {
 				p.seen = now
+				if unresolved(p.path) && t.fixPath(e.PID, p) {
+					relink = true
+				}
 				continue
 			}
 			delete(t.procs, e.PID)
@@ -481,7 +517,29 @@ func (t *Tracker) refresh() {
 		}
 	}
 	t.updated = now
-	t.ensureJobs()
+	if relink {
+		t.relinkAll() // путь предка стал известен: цепочки потомков тоже
+	} else {
+		t.ensureJobs()
+	}
+}
+
+// fixPath — путь процесса не был известен (ETW дал NT-путь тома, которого
+// ещё не было в таблице, или процесс не открылся): спросить снова.
+func (t *Tracker) fixPath(pid uint32, p *procInfo) bool {
+	path := ntToDos(p.path)
+	if unresolved(path) {
+		var created int64
+		if path, created = query(pid); created != p.created && p.created != 0 {
+			return false // PID уже другого процесса
+		}
+	}
+	if unresolved(path) {
+		return false
+	}
+	t.logf("pid %d: путь выяснен позже: %s", pid, path)
+	p.path = path
+	return true
 }
 
 // ensureJobs помещает в job живые процессы под правилом, которые ещё не в
@@ -548,7 +606,7 @@ func (t *Tracker) link(pid uint32, depth int) []string {
 	p.linked = true
 	if p.pinned {
 		p.orphan = false
-		p.rule = t.resolve(p)
+		t.setRule(p, t.resolve(p))
 		return p.chain
 	}
 	p.chain = []string{p.path}
@@ -564,7 +622,7 @@ func (t *Tracker) link(pid uint32, depth int) []string {
 		p.chain = append(p.chain, pc...)
 	}
 	if pid != t.self {
-		p.rule = t.resolve(p)
+		t.setRule(p, t.resolve(p))
 	}
 	return p.chain
 }
@@ -582,11 +640,24 @@ func (t *Tracker) resolve(p *procInfo) string {
 
 func (t *Tracker) match(chain []string) string {
 	for _, path := range chain {
+		if unresolved(path) {
+			path = ntToDos(path) // предок мог завершиться, пока его том был без буквы
+		}
 		if id := t.rules.Match(path); id != "" {
 			return id
 		}
 	}
 	return ""
+}
+
+// ntChain — в цепочке есть предок, чей путь так и не перевести в C:\….
+func ntChain(chain []string) bool {
+	for _, path := range chain {
+		if path != "" && unresolved(path) && unresolved(ntToDos(path)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Entry — процесс из снимка системы.

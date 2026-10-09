@@ -16,9 +16,9 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.4 "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--fg); user-select: none; }
-header { display: flex; align-items: center; gap: 16px; padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 20px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
 header h1 { font-size: 18px; margin: 0; font-weight: 600; }
-main { padding: 16px 20px 40px; display: grid; gap: 16px; }
+main { padding: 16px 20px 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 .card > h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; padding: 10px 14px; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--line); }
 .card > h2 .sp { flex: 1; }
@@ -30,9 +30,12 @@ th { font-weight: 500; color: var(--muted); font-size: 12px; }
 tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: var(--hover); }
 .path { font-family: Consolas, monospace; font-size: 12.5px; word-break: break-all; user-select: text; }
+td.path { min-width: 160px; }
 .muted { color: var(--muted); }
 .num { text-align: right; width: 1%; white-space: nowrap; }
-.act { text-align: right; white-space: nowrap; width: 1%; }
+.act { text-align: right; width: 1%; }
+.act button { white-space: nowrap; margin: 2px 0; }
+td select { max-width: 150px; }
 button, select, input[type=text], textarea { font: inherit; color: inherit; }
 button { background: var(--card); border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
 button:hover { border-color: var(--acc); }
@@ -43,7 +46,7 @@ select, input[type=text], textarea { background: var(--bg); border: 1px solid va
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; border: 1px solid currentColor; }
 .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: currentColor; margin-right: 6px; }
-#err { color: var(--bad); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+#err { color: var(--bad); flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
 .switch { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 600; }
 .switch input { display: none; }
 .switch .tr { width: 48px; height: 26px; border-radius: 13px; background: var(--line); position: relative; transition: .15s; }
@@ -64,6 +67,17 @@ details > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; }
 .pick tr { cursor: pointer; }
 textarea { width: 100%; height: 120px; resize: vertical; font-family: Consolas, monospace; font-size: 12px; }
 .stats { color: var(--muted); font-size: 12px; }
+.card > div { overflow-x: auto; }
+.step { display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.step:last-child { border-bottom: 0; }
+.step .n { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 600; color: var(--muted); }
+.step.cur .n { border-color: var(--acc); color: var(--acc); }
+.step.done .n { background: var(--ok); border-color: var(--ok); color: #fff; }
+.step.off { opacity: .55; }
+.step h4 { margin: 3px 0 2px; font-size: 14px; font-weight: 600; }
+.step .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.ipres { user-select: text; }
+.ipres b { font-family: Consolas, monospace; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -78,7 +92,22 @@ textarea { width: 100%; height: 120px; resize: vertical; font-family: Consolas, 
 </header>
 
 <main>
+  <section class="card" id="startCard" hidden>
+    <h2>Начало работы <span class="sp"></span>
+      <span class="hint">Сначала профиль VPN и проверка, что адрес через него действительно другой, потом — программы.</span>
+    </h2>
+    <div id="start"></div>
+  </section>
+
   <section class="card">
+    <h2>Профили VPN <span class="sp"></span>
+      <button data-a="importProfile">Импорт из файла…</button>
+      <button data-a="pasteProfile">Вставить текст / vpn://…</button>
+    </h2>
+    <div id="profiles"></div>
+  </section>
+
+  <section class="card" id="rulesCard">
     <h2>Правила <span class="sp"></span>
       <button data-a="addExe">+ Программа…</button>
       <button data-a="addFolder">+ Папка…</button>
@@ -91,14 +120,6 @@ textarea { width: 100%; height: 120px; resize: vertical; font-family: Consolas, 
   <section class="card">
     <h2>Процессы в песочнице <span class="sp"></span><span class="muted" id="procCount" style="font-weight:400"></span></h2>
     <div id="procs"></div>
-  </section>
-
-  <section class="card">
-    <h2>Профили VPN <span class="sp"></span>
-      <button data-a="importProfile">Импорт из файла…</button>
-      <button data-a="pasteProfile">Вставить текст / vpn://…</button>
-    </h2>
-    <div id="profiles"></div>
   </section>
 
   <details class="card" id="logBox">
@@ -138,7 +159,25 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const base = p => String(p).split("\\").pop();
 let st = null, procs = [], down = false, busy = false, renameID = "";
 
-async function api(cmd, args) { return window.call(cmd, args === undefined ? null : args); }
+// Привязки Go отвечают сразу, а результат приходит позже через
+// window._done: долгий вызов (проверка профиля, запуск службы) не
+// замораживает окно.
+let seq = 0;
+const pending = new Map();
+window._done = (id, err, res) => {
+  const p = pending.get(id);
+  if (!p) return;
+  pending.delete(id);
+  if (err == null) p.res(res); else p.rej(err);
+};
+function native(fn, ...args) {
+  return new Promise((res, rej) => {
+    const id = ++seq;
+    pending.set(id, {res, rej});
+    Promise.resolve(window[fn](id, ...args)).catch(e => { pending.delete(id); rej(e); });
+  });
+}
+const api = (cmd, args) => native("callAsync", cmd, args === undefined ? null : args);
 
 function showErr(e) {
   const m = e instanceof Error ? e.message : String(e ?? "");
@@ -149,7 +188,7 @@ function showErr(e) {
 // put меняет содержимое, только если оно изменилось: иначе ежесекундная
 // перерисовка съедает клики и сбрасывает наведение.
 function put(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
-const repaint = () => document.querySelectorAll("#rules, #procs, #profiles").forEach(el => el._html = null);
+const repaint = () => document.querySelectorAll("#rules, #procs, #profiles, #start").forEach(el => el._html = null);
 
 // act — команда, после которой сразу обновить экран (с перерисовкой:
 // флажок или список могли остаться в состоянии, которое служба отвергла).
@@ -171,6 +210,58 @@ function tunState(id) {
 }
 const badge = s => s ? `<span class="badge ${s.cls}" title="${esc(s.title || "")}">${esc(s.text)}</span>` : "";
 
+// ---- проверка профиля: внешний IP через туннель против прямого ----
+const checking = new Set();
+const chkKey = id => "check:" + id;
+function chkGet(id) { try { return JSON.parse(localStorage.getItem(chkKey(id)) || "null"); } catch (e) { return null; } }
+function chkSet(id, v) { if (v) localStorage.setItem(chkKey(id), JSON.stringify(v)); else localStorage.removeItem(chkKey(id)); }
+
+// chkVerdict: ok — туннель отвечает и адрес не совпал с настоящим; bad —
+// проверка провалилась или адрес совпал.
+function chkVerdict(r) {
+  if (!r) return null;
+  if (r.vpnErr) return {cls: "bad", text: "нет ответа через туннель", title: r.vpnErr};
+  if (r.direct && r.vpn === r.direct) return {cls: "bad", text: "IP совпадает с настоящим!"};
+  return {cls: "ok", text: "IP другой"};
+}
+const chkOK = id => { const v = chkVerdict(chkGet(id)); return !!v && v.cls === "ok"; };
+
+function chkText(r) {
+  if (!r) return "";
+  const ip = v => `<b>${esc(v)}</b>`;
+  const vpn = r.vpnErr ? `через VPN: <span class="bad">${esc(r.vpnErr)}</span>` : `через VPN ${ip(r.vpn)}`;
+  const dir = r.directErr ? `настоящий узнать не удалось` : `настоящий ${ip(r.direct)}`;
+  let s = `<span class="ipres">${vpn} · ${dir}</span>`;
+  if (!r.vpnErr && r.direct && r.vpn === r.direct)
+    s += `<div class="bad">Через профиль виден ваш настоящий адрес. Не добавляйте программы, пока не разберётесь с профилем.</div>`;
+  return s;
+}
+
+function chkCell(id) {
+  if (checking.has(id)) return `<span class="badge warn">проверка…</span>`;
+  const r = chkGet(id);
+  return r ? `${badge(chkVerdict(r))} <span class="muted" style="font-size:12px">${chkText(r)}</span>` : `<span class="muted">не проверен</span>`;
+}
+
+async function checkProfile(id) {
+  if (!id || checking.has(id)) return;
+  checking.add(id); repaint(); refresh();
+  try {
+    const r = await api("checkProfile", {id});
+    r.t = Date.now();
+    chkSet(id, r);
+  } catch (e) { showErr(e); }
+  finally { checking.delete(id); repaint(); refresh(); }
+}
+
+// Профиль для нового правила: проверенный с поднятым туннелем, иначе
+// любой с поднятым туннелем, иначе первый.
+function defaultProfile() {
+  if (!st || !st.profiles.length) return "";
+  const up = p => tunState(p.id)?.cls === "ok";
+  return (st.profiles.find(p => up(p) && chkOK(p.id)) || st.profiles.find(up) || st.profiles[0]).id;
+}
+
 function profName(id) { const p = st && st.profiles.find(p => p.id === id); return p ? p.name : ""; }
 
 function renderHeader() {
@@ -189,18 +280,67 @@ function renderHeader() {
   $("#swText").className = st.enabled && !st.running ? "bad" : "";
   if (st.err) showErr("Фильтр: " + st.err);
   const s = st.stats;
-  $("#stats").textContent = s ? `в туннель ${s.toTunnel} · из туннеля ${s.fromTunnel} · заблокировано ${s.blocked}` : "";
+  $("#stats").textContent = s ? `в туннель ${s.toTunnel} · из туннеля ${s.fromTunnel} · заблокировано ${s.blocked}` +
+    (s.unknown ? ` · без владельца ${s.unknown}` : "") : "";
+}
+
+// renderStart — пошаговый первый запуск: профиль → проверка → программы.
+// Виден, пока нет ни одного правила.
+function renderStart() {
+  const card = $("#startCard"), el = $("#start");
+  const show = !down && !!st && !st.rules.length;
+  card.hidden = !show;
+  if (!show) return;
+  const hasProf = st.profiles.length > 0;
+  const target = hasProf ? defaultProfile() : "";
+  const anyOK = st.profiles.some(p => chkOK(p.id));
+  const skipped = localStorage.getItem("check:skip") === "1";
+  const passed = anyOK || skipped;
+  const step = (n, state, title, body) =>
+    `<div class="step ${state}"><div class="n">${state === "done" ? "✓" : n}</div><div><h4>${title}</h4>${body}</div></div>`;
+
+  const s1 = step(1, hasProf ? "done" : "cur", "Добавьте профиль VPN",
+    hasProf ? `<div class="muted">Профилей: ${st.profiles.length}. Ещё один можно добавить в разделе «Профили VPN».</div>`
+      : `<div class="muted">Файл .conf AmneziaWG/WireGuard или строка vpn://… из приложения Amnezia.</div>
+         <div class="row"><button class="pri" data-a="importProfile">Импорт из файла…</button>
+         <button data-a="pasteProfile">Вставить текст / vpn://…</button></div>`);
+
+  let b2 = "";
+  if (hasProf) {
+    const ts = tunState(target), r = chkGet(target), busyChk = checking.has(target);
+    const why = !st.enabled ? "Включите защиту переключателем вверху — без неё туннели не поднимаются."
+      : !st.running ? "Фильтр не работает — проверить нельзя. Подробности в журнале службы."
+      : ts?.cls !== "ok" ? "Туннель ещё не поднялся — дождитесь «связь есть»." : "";
+    b2 = `<div class="muted">Профиль «${esc(profName(target))}» ${badge(ts)} — сравним внешний IP через туннель с вашим настоящим.</div>
+      ${r ? `<div style="margin-top:6px">${badge(chkVerdict(r))} ${chkText(r)}</div>` : ""}
+      ${why ? `<div class="warn" style="margin-top:6px">${esc(why)}</div>` : ""}
+      <div class="row"><button class="pri" data-a="checkProfile" data-id="${esc(target)}"${busyChk || !st.running ? " disabled" : ""}>${busyChk ? "Проверяю…" : r ? "Проверить ещё раз" : "Проверить"}</button>
+      ${!anyOK && !skipped && r ? `<button data-a="skipCheck">Всё равно продолжить</button>` : ""}</div>`;
+  }
+  const s2 = step(2, !hasProf ? "off" : anyOK ? "done" : "cur", "Проверьте, что VPN меняет адрес", b2);
+
+  const dis = passed ? "" : " disabled";
+  const s3 = step(3, passed ? "cur" : "off", "Добавьте программу или папку",
+    `<div class="muted">Программа и всё, что она запускает, будет выходить в сеть только через VPN. Нет туннеля — нет сети.</div>
+     <div class="row"><button class="pri" data-a="addExe"${dis}>+ Программа…</button>
+     <button data-a="addFolder"${dis}>+ Папка…</button>
+     <button data-a="addRunning"${dis}>+ Из запущенных…</button></div>`);
+  put(el, s1 + s2 + s3);
 }
 
 function renderRules() {
   const el = $("#rules");
   if (down || !st) { put(el, `<div class="empty">—</div>`); return; }
-  if (!st.rules.length) { put(el, `<div class="empty">Правил нет. Добавьте программу или папку — всё, что из неё запускается, пойдёт в сеть только через VPN.</div>`); return; }
+  const noProf = !st.profiles.length;
+  document.querySelectorAll("#rulesCard h2 button").forEach(b => {
+    b.disabled = noProf; b.title = noProf ? "Сначала добавьте профиль VPN" : "";
+  });
+  if (!st.rules.length) { put(el, `<div class="empty">${noProf ? "Сначала добавьте профиль VPN и проверьте его." : "Правил нет. Добавьте программу или папку — всё, что из неё запускается, пойдёт в сеть только через VPN."}</div>`); return; }
   const count = {};
   for (const p of procs) count[p.rule] = (count[p.rule] || 0) + 1;
   const opts = sel => `<option value="">— нет (сеть закрыта) —</option>` +
     st.profiles.map(p => `<option value="${esc(p.id)}"${p.id === sel ? " selected" : ""}>${esc(p.name)}</option>`).join("");
-  put(el, `<table><thead><tr><th style="width:1%">Вкл</th><th></th><th>Путь</th><th>Профиль</th><th>Туннель</th><th class="num">Процессов</th><th></th></tr></thead><tbody>` +
+  put(el, `<table><thead><tr><th style="width:1%">Вкл</th><th></th><th>Путь</th><th>Профиль</th><th>Туннель</th><th class="num" title="Процессов запущено">Проц.</th><th></th></tr></thead><tbody>` +
     st.rules.map(r => {
       const ts = r.profile ? tunState(r.profile) : {cls: "bad", text: "сеть закрыта"};
       return `<tr data-id="${esc(r.id)}">
@@ -248,14 +388,16 @@ function renderProfiles() {
   const el = $("#profiles");
   if (down || !st) { put(el, `<div class="empty">—</div>`); return; }
   if (!st.profiles.length) { put(el, `<div class="empty">Профилей нет. Импортируйте .conf AmneziaWG/WireGuard или вставьте vpn://-строку.</div>`); return; }
-  put(el, `<table><thead><tr><th>Имя</th><th>Туннель</th><th>Правил</th><th></th></tr></thead><tbody>` +
+  put(el, `<table><thead><tr><th>Имя</th><th>Туннель</th><th>Проверка</th><th>Правил</th><th></th></tr></thead><tbody>` +
     st.profiles.map(p => {
       const used = st.rules.filter(r => r.profile === p.id).length;
       return `<tr data-id="${esc(p.id)}">
         <td>${esc(p.name)}</td>
         <td>${badge(tunState(p.id))}</td>
+        <td>${chkCell(p.id)}</td>
         <td>${used || ""}</td>
-        <td class="act"><button data-a="rename">Переименовать</button>
+        <td class="act"><button data-a="checkProfile" data-id="${esc(p.id)}"${!st.running ? ` disabled title="включите защиту"` : checking.has(p.id) ? " disabled" : ""}>Проверить</button>
+          <button data-a="rename">Переименовать</button>
           <button class="danger" data-a="profDel"${used ? ` disabled title="используется правилами"` : ""}>Удалить</button></td></tr>`;
     }).join("") + `</tbody></table>`);
 }
@@ -284,14 +426,13 @@ async function refresh() {
   } finally { refreshing = false; }
   // не перерисовывать, пока пользователь открыл выпадающий список
   if (document.activeElement && document.activeElement.tagName === "SELECT") { renderHeader(); return; }
-  renderHeader(); renderRules(); renderProcs(); renderProfiles(); refreshLog();
+  renderHeader(); renderStart(); renderRules(); renderProcs(); renderProfiles(); refreshLog();
 }
 
 // ---- добавление правил ----
 async function addRule(path) {
   if (!path) return;
-  const profile = st && st.profiles.length ? st.profiles[0].id : "";
-  await act("addRule", {path, profile});
+  await act("addRule", {path, profile: defaultProfile()});
 }
 
 let running = [];
@@ -308,7 +449,7 @@ function renderRunning() {
 
 // ---- обработчики ----
 const actions = {
-  async start(b) { b.disabled = true; try { await window.startDaemon(); } catch (e) { showErr(e); } b.disabled = false; refresh(); },
+  async start(b) { b.disabled = true; try { await native("startDaemonAsync"); } catch (e) { showErr(e); } b.disabled = false; refresh(); },
   async stop() { if (confirm("Остановить службу? Фильтр будет снят, программы из правил выйдут в сеть напрямую.")) await act("shutdown").catch(() => {}); setTimeout(refresh, 300); },
   async addExe() { try { await addRule(await window.pickExe()); } catch (e) { showErr(e); } },
   async addFolder() { try { await addRule(await window.pickFolder()); } catch (e) { showErr(e); } },
@@ -346,7 +487,13 @@ const actions = {
   async renameSave() { try { await act("renameProfile", {id: renameID, name: $("#rnName").value}); closeModals(); } catch (e) {} },
   async profDel(b) {
     const id = b.closest("tr").dataset.id;
-    if (confirm(`Удалить профиль «${profName(id)}»? Файл с ключами будет стёрт.`)) await act("removeProfile", {id}).catch(() => {});
+    if (confirm(`Удалить профиль «${profName(id)}»? Файл с ключами будет стёрт.`)) { await act("removeProfile", {id}).catch(() => {}); if (!st?.profiles.some(p => p.id === id)) chkSet(id, null); }
+  },
+  checkProfile(b) { checkProfile(b.dataset.id); },
+  skipCheck() {
+    if (confirm("Продолжить без успешной проверки? Если профиль не меняет адрес, программы будут выходить в сеть с вашим настоящим IP.")) {
+      localStorage.setItem("check:skip", "1"); repaint(); refresh();
+    }
   },
   close: closeModals,
 };

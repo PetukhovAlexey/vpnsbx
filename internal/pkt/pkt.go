@@ -404,6 +404,18 @@ func Fragment4(p []byte, in *Info, mtu int) [][]byte {
 	return out
 }
 
+// UDP4 строит IPv4/UDP-пакет с готовыми суммами.
+func UDP4(src, dst netip.AddrPort, payload []byte) []byte {
+	u := make([]byte, 8+len(payload))
+	binary.BigEndian.PutUint16(u[0:2], src.Port())
+	binary.BigEndian.PutUint16(u[2:4], dst.Port())
+	binary.BigEndian.PutUint16(u[4:6], uint16(len(u)))
+	copy(u[8:], payload)
+	out := append(ipHeader(false, ProtoUDP, src.Addr(), dst.Addr(), len(u)), u...)
+	Fix(out)
+	return out
+}
+
 // EchoRequest строит ICMP echo (IPv4) — для проверки живости туннеля.
 func EchoRequest(src, dst netip.Addr, id, seq uint16) []byte {
 	b := make([]byte, 8+16)
