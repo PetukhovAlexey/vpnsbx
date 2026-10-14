@@ -37,13 +37,13 @@ td.path { min-width: 160px; }
 @media (max-width: 960px) { .act { white-space: normal; } }
 .act button { white-space: nowrap; margin: 2px 0; }
 td select { max-width: 150px; }
-button, select, input[type=text], textarea { font: inherit; color: inherit; }
+button, select, input[type=text], input[type=password], input[type=number], textarea { font: inherit; color: inherit; }
 button { background: var(--card); border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
 button:hover { border-color: var(--acc); }
 button.pri { background: var(--acc); color: #fff; border-color: var(--acc); }
 button.danger:hover { border-color: var(--bad); color: var(--bad); }
 button:disabled { opacity: .5; cursor: default; }
-select, input[type=text], textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; }
+select, input[type=text], input[type=password], input[type=number], textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; border: 1px solid currentColor; }
 .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: currentColor; margin-right: 6px; }
@@ -58,7 +58,7 @@ select, input[type=text], textarea { background: var(--bg); border: 1px solid va
 .ico { width: 18px; text-align: center; }
 .tree { display: inline-block; width: calc(var(--d) * 18px); }
 details > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; }
-#log { margin: 0; padding: 8px 14px 14px; max-height: 300px; overflow: auto; font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; user-select: text; }
+#log, pre.log { margin: 0; padding: 8px 14px 14px; max-height: 300px; overflow: auto; font: 12px/1.45 Consolas, monospace; white-space: pre-wrap; user-select: text; }
 .modal { position: fixed; inset: 0; background: #0006; display: none; align-items: flex-start; justify-content: center; padding-top: 7vh; z-index: 10; }
 .modal.on { display: flex; }
 .modal .box { background: var(--card); border: 1px solid var(--line); border-radius: 8px; width: min(820px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
@@ -79,20 +79,76 @@ textarea { width: 100%; height: 120px; resize: vertical; font-family: Consolas, 
 .step .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .ipres { user-select: text; }
 .ipres b { font-family: Consolas, monospace; font-weight: 600; }
+/* вкладки */
+.tabs { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 2px; }
+.tabs button { border: 0; background: none; border-radius: 5px; padding: 4px 14px; color: var(--muted); }
+.tabs button.on { background: var(--card); color: var(--fg); font-weight: 600; box-shadow: 0 1px 2px #0002; }
+body[data-tab="vm"] .sbx, body[data-tab="sbx"] .vm { display: none; }
+/* VMware-контур */
+.facts { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 14px; }
+.facts > div { min-width: 0; }
+.facts .k { color: var(--muted); font-size: 12px; }
+.facts .v { user-select: text; }
+.mono { font-family: Consolas, monospace; font-size: 12.5px; }
+.lab h2 .sub { font-weight: 400; font-size: 12.5px; }
+.note { padding: 8px 14px; border-top: 1px solid var(--line); font-size: 13px; }
+.form { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
+.form > label { color: var(--muted); }
+.form .fl { display: flex; gap: 6px; }
+.form .fl input { flex: 1; min-width: 0; }
+.form .hint { grid-column: 2; color: var(--muted); font-size: 12px; margin-top: -4px; }
+.chk { display: flex; gap: 8px; align-items: flex-start; }
+.chk input { margin-top: 3px; }
+/* панель роутера */
+#rtBody { border: 0; margin: 0; padding: 0; min-width: 0; }
+.rtsec { border-top: 1px solid var(--line); }
+.rtsec > h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; padding: 10px 14px 4px; font-size: 14px; font-weight: 600; }
+.rtsec > h3 .hint { flex-basis: 100%; font-weight: 400; font-size: 12.5px; color: var(--muted); }
+.rtsec > div { overflow-x: auto; }
+.rtsec .row, #rtBody > .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 14px; }
+.rtsec details > summary { font-weight: 400; color: var(--muted); padding: 6px 14px; }
+.rtsec input[type=number] { width: 110px; }
+#rtHead { display: contents; }
+.spin { display: inline-block; width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -1px; margin-right: 5px; }
+@keyframes sp { to { transform: rotate(360deg); } }
 </style>
 </head>
-<body>
+<body data-tab="sbx">
 <header>
   <h1>VPN-песочница</h1>
-  <span id="svc" class="badge muted">…</span>
-  <button id="svcBtn"></button>
+  <nav class="tabs"><button data-tab="sbx">Песочница</button><button data-tab="vm">VMware-контур</button></nav>
+  <span id="svc" class="badge muted sbx">…</span>
+  <button id="svcBtn" class="sbx"></button>
   <span id="err"></span>
-  <span class="stats" id="stats"></span>
-  <label class="switch" title="Выключено — фильтрация полностью снята"><span id="swText">Защита</span>
+  <span class="stats sbx" id="stats"></span>
+  <label class="switch sbx" title="Выключено — фильтрация полностью снята"><span id="swText">Защита</span>
     <input type="checkbox" id="sw"><span class="tr"></span></label>
+  <button class="vm" data-a="vmRefresh" title="Перечитать лаборатории и состояние ВМ">Обновить список</button>
 </header>
 
-<main>
+<main class="vm">
+  <section class="card">
+    <h2>VMware-контур <span class="sp"></span>
+      <button class="pri" data-a="vmNewLab">Новая лаборатория…</button>
+      <button data-a="vmAddLab">Подключить папку…</button>
+      <button data-a="vmReadme">Инструкция</button>
+      <span class="hint">Роутер в VMware Workstation и ведомые ВМ: каждая выходит в интернет только через свой профиль AmneziaWG, назначенный в панели роутера. Здесь — создание ВМ, проверка и обновление софта в них, а ниже — сама панель роутера.</span>
+    </h2>
+    <div id="vmSum"></div>
+  </section>
+  <div id="vmLabs" style="display:grid;grid-template-columns:minmax(0,1fr);gap:16px"></div>
+  <section class="card" id="rtCard" hidden>
+    <h2>Панель роутера <span id="rtTabs"></span><span class="sp"></span><span id="rtHead"></span>
+      <span class="hint">Всё, что умеет роутер этой лаборатории: окно показывает те функции, которые есть в его версии софта.</span></h2>
+    <fieldset id="rtBody"></fieldset>
+  </section>
+  <details class="card" id="vmLogBox">
+    <summary>Журнал операций <span class="muted" id="vmLogN" style="font-weight:400"></span></summary>
+    <pre id="vmLog" class="log"></pre>
+  </details>
+</main>
+
+<main class="sbx">
   <section class="card" id="startCard" hidden>
     <h2>Начало работы <span class="sp"></span>
       <span class="hint">Сначала профиль VPN и проверка, что адрес через него действительно другой, потом — программы.</span>
@@ -152,6 +208,62 @@ textarea { width: 100%; height: 120px; resize: vertical; font-family: Consolas, 
   <h3>Переименовать профиль</h3>
   <div class="body"><input type="text" id="rnName"></div>
   <div class="foot"><button data-a="close">Отмена</button><button class="pri" data-a="renameSave">Сохранить</button></div>
+</div></div>
+
+<div class="modal" id="mVmAdd"><div class="box" style="width:min(640px,92vw)">
+  <h3>Новая ВМ в лаборатории <span id="vaLab" class="muted" style="font-weight:400"></span></h3>
+  <div class="body form">
+    <label for="vaName">Имя</label><input type="text" id="vaName" placeholder="например, ws2" spellcheck="false">
+    <div class="hint">Латиница в нижнем регистре, цифры, дефис. Это же имя будет у ВМ на роутере.</div>
+    <label for="vaOs">Система</label>
+    <select id="vaOs" style="justify-self:start"><option value="ubuntu">Ubuntu Desktop</option><option value="windows">Windows 10 / 11</option></select>
+    <label for="vaIso" id="vaIsoL">ISO Ubuntu Desktop</label>
+    <div class="fl"><input type="text" id="vaIso" class="mono" spellcheck="false"><button data-a="vaPick">Обзор…</button></div>
+    <div class="hint" id="vaIsoH"></div>
+    <span></span><label class="chk" style="color:inherit"><input type="checkbox" id="vaOpen" checked> Открыть ВМ в VMware после создания</label>
+  </div>
+  <div class="body muted" style="padding-top:0">Создаются диск и .vmx с одной сетевой картой во внутреннем сегменте; роутер узнаёт MAC из lab.conf.
+    <span id="vaNote"></span></div>
+  <div class="foot"><button data-a="close">Отмена</button><button class="pri" data-a="vaSave" id="vaBtn">Создать</button></div>
+</div></div>
+
+<div class="modal" id="mVmUpd"><div class="box" style="width:min(620px,92vw)">
+  <h3>Обновить софт в ВМ <span id="vuLab" class="muted" style="font-weight:400"></span></h3>
+  <div class="body">
+    <div>Обновление откроется в отдельном окне консоли: там нужно будет ввести пароль <b>sudo</b> на роутере и ВМ
+      (пароль окно не видит и не хранит). Обновляются только запущенные ВМ, сначала роутер. Хосты, профили, пробросы и пароль панели не меняются; если новая версия не применится, роутер вернётся к прежней.</div>
+    <label class="chk"><input type="checkbox" id="vuRouter"><span>Только роутер</span></label>
+    <label class="chk"><input type="checkbox" id="vuAwg"><span>Пересобрать AmneziaWG на роутере<br><span class="muted">Туннели всех ВМ на минуту переподнимутся.</span></span></label>
+    <label class="chk"><input type="checkbox" id="vuForce"><span>Переустановить, даже если версия совпадает</span></label>
+  </div>
+  <div class="foot"><button data-a="close">Отмена</button><button class="pri" data-a="vuGo">Открыть окно обновления</button></div>
+</div></div>
+
+<div class="modal" id="mVmNew"><div class="box" style="width:min(720px,92vw)">
+  <h3>Новая лаборатория</h3>
+  <div class="body form">
+    <label for="vnDir">Папка</label>
+    <div class="fl"><input type="text" id="vnDir" class="mono" spellcheck="false"><button data-a="vnPickDir">Обзор…</button></div>
+    <label for="vnSrv">ISO Ubuntu Server</label>
+    <div class="fl"><input type="text" id="vnSrv" class="mono" spellcheck="false"><button data-a="vnPickSrv">Обзор…</button></div>
+    <div class="hint">Для роутера, ubuntu.com/download/server. Имя образа как на сайте — тогда сверится SHA256.</div>
+    <label for="vnClients">Ведомые ВМ</label><input type="text" id="vnClients" placeholder="ws1, ws2" spellcheck="false">
+    <div class="hint">Имена через запятую; можно оставить пустым и добавить ВМ позже.</div>
+    <label for="vnDesk">ISO Ubuntu Desktop</label>
+    <div class="fl"><input type="text" id="vnDesk" class="mono" spellcheck="false"><button data-a="vnPickDesk">Обзор…</button></div>
+    <label for="vnMgmt">Сеть управления</label>
+    <select id="vnMgmt" style="justify-self:start"><option value="VMnet1">VMnet1 (host-only)</option><option value="VMnet8">VMnet8 (NAT)</option></select>
+    <div class="hint">Через неё этот компьютер видит роутер (панель, SSH). Роутер получит адрес .10 в этой сети.</div>
+    <label for="vnLan">LAN-сегмент</label><input type="text" id="vnLan" class="mono" style="justify-self:start" spellcheck="false">
+    <label for="vnSsh">Порт SSH / панели</label>
+    <div class="fl" style="justify-self:start"><input type="text" id="vnSsh" class="mono" style="width:70px"><input type="text" id="vnPanel" class="mono" style="width:70px"></div>
+    <label for="vnAdmin">Админ-сети</label><input type="text" id="vnAdmin" class="mono" placeholder="например, 192.168.1.0/24" spellcheck="false">
+    <div class="hint">Откуда ещё, кроме этого компьютера, пускать на SSH и панель роутера. Пусто — ниоткуда.</div>
+    <label for="vnLocal">Локальные сети</label><input type="text" id="vnLocal" class="mono" spellcheck="false">
+    <div class="hint">Куда ВМ ходят мимо туннеля: auto — сеть моста, none — никуда, или список сетей.</div>
+  </div>
+  <div class="body muted" style="padding-top:0">Создание идёт в отдельном окне консоли: проверка образов, адаптера VMware и вопрос о маршруте Windows → LAN-сегмент (нужны права администратора).</div>
+  <div class="foot"><button data-a="close">Отмена</button><button class="pri" data-a="vnGo">Создать</button></div>
 </div></div>
 
 <script>
@@ -515,6 +627,588 @@ const actions = {
   close: closeModals,
 };
 
+// ================================================================ VMware-контур
+// Лаборатории vmgw: окно читает lab.json и состояние ВМ (vmgwInfoAsync), а
+// создают ВМ и обновляют софт скрипты комплекта (как Setup.cmd и Update.cmd).
+let vm = null, vmLoading = false;
+const vmChk = {};      // папка → {busy, rows, err, t}
+const vmBusy = {};     // папка → текст текущей операции
+const vmLog = [];
+let vmTarget = "";     // папка лаборатории для открытого окна
+
+const vmExtra = () => store.get("vmgw:labs") || [];
+const sameDir = (a, b) => String(a).toLowerCase().replace(/\\+$/, "") === String(b).toLowerCase().replace(/\\+$/, "");
+const vmLab = dir => vm && vm.labs.find(l => sameDir(l.dir, dir));
+const labName = dir => base(String(dir).replace(/\\+$/, ""));
+const tm = t => new Date(t).toLocaleTimeString("ru", {hour: "2-digit", minute: "2-digit"});
+
+function vmLogAdd(text) {
+  vmLog.push(`[${new Date().toLocaleTimeString("ru")}] ${text}`);
+  if (vmLog.length > 300) vmLog.splice(0, vmLog.length - 300);
+  const el = $("#vmLog"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 5;
+  el.textContent = vmLog.join("\n");
+  if (atEnd) el.scrollTop = el.scrollHeight;
+  $("#vmLogN").textContent = vmLog.length ? `(${vmLog.length})` : "";
+}
+
+async function vmRefresh() {
+  if (vmLoading) return;
+  vmLoading = true;
+  try { vm = await native("vmgwInfoAsync", vmExtra()); vm.labs = (vm.labs || []).map(l => ({...l, vms: l.vms || []})); }
+  catch (e) { showErr(e); }
+  finally { vmLoading = false; }
+  renderVm();
+}
+
+// vmCheck — версии софта в ВМ (по SSH, без пароля). Ошибки — в журнал.
+async function vmCheck(dir, quiet) {
+  const c = vmChk[dir] || (vmChk[dir] = {});
+  if (c.busy || vmBusy[dir]) return;
+  c.busy = true; renderVm();
+  try {
+    const r = await native("vmgwCheckAsync", dir);
+    Object.assign(c, {rows: r.rows || [], err: "", t: Date.now()});
+    if (!quiet) vmLogAdd(`Проверка ${labName(dir)}: ` + (c.rows.map(x => `${x.Vm} — ${x.Result}`).join("; ") || "нет запущенных ВМ"));
+  } catch (e) {
+    c.err = String(e && e.message || e); c.t = Date.now();
+    vmLogAdd(`Проверка ${labName(dir)}: ${c.err}`);
+  } finally { c.busy = false; renderVm(); }
+}
+
+function resCls(r) {
+  if (!r) return "muted";
+  if (r === "актуальна" || r === "обновлена") return "ok";
+  if (r === "нужно обновить") return "warn";
+  if (r === "выключена" || /^Windows/.test(r)) return "muted";
+  return "bad";
+}
+
+function renderVm() {
+  if (!vm) { put($("#vmSum"), `<div class="empty"><span class="spin"></span>Ищу VMware и лаборатории…</div>`); return; }
+  const f = (k, v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  let sum = `<div class="facts">` +
+    f("VMware Workstation", vm.vmware ? `<span class="ok">найден</span> <span class="muted mono">${esc(vm.vmware)}</span>` : `<span class="bad">${esc(vm.vmwareErr || "не найден")}</span>`) +
+    f("Комплект vmgw", vm.kitStamp ? `<span class="mono">${esc(vm.kitStamp)}</span>` : `<span class="bad">${esc(vm.rootErr || "не найден")}</span>`) +
+    `</div>`;
+  if (vm.vmware && vm.vmwareErr) sum += `<div class="note warn">${esc(vm.vmwareErr)}</div>`;
+  for (const [dir, what] of Object.entries(vmBusy))
+    if (!vmLab(dir)) sum += `<div class="note warn"><span class="spin"></span>${esc(what)} <span class="mono muted">${esc(dir)}</span></div>`;
+  if (!vm.labs.length) sum += `<div class="note muted">Лабораторий пока нет. «Новая лаборатория…» создаст роутер и ВМ в
+    <span class="mono">${esc(vm.defaultDir)}</span> или другой папке; «Подключить папку…» — если лаборатория уже есть в другом месте (там лежит lab.json).</div>`;
+  put($("#vmSum"), sum);
+  put($("#vmLabs"), vm.labs.map(renderLab).join(""));
+  renderRt();
+}
+
+function renderLab(l) {
+  const c = vmChk[l.dir] || {}, busy = vmBusy[l.dir], extra = vmExtra().some(d => sameDir(d, l.dir));
+  const d = `data-dir="${esc(l.dir)}"`;
+  if (l.err) return `<section class="card lab" ${d}><h2>${esc(labName(l.dir))} <span class="sub muted mono">${esc(l.dir)}</span><span class="sp"></span>
+      ${extra ? `<button data-a="vmForget">Убрать из списка</button>` : ""}</h2><div class="note bad">${esc(l.err)}</div></section>`;
+  const router = l.vms.find(v => v.role === "router");
+  const routerOn = !!router && router.running;
+  const rows = c.rows || [];
+  const need = rows.some(r => r.Result === "нужно обновить");
+  const off = busy || c.busy ? " disabled" : "";
+  const noRouter = routerOn ? "" : ` disabled title="Роутер не запущен"`;
+  const h = `<h2>${esc(labName(l.dir))}${l.default ? ` <span class="badge muted" title="Папка по умолчанию">основная</span>` : ""}
+    <span class="sub muted">роутер <span class="mono">${esc(l.mgmtAddr)}</span> · LAN <span class="mono">${esc(l.lanNet)}</span></span>
+    <span class="sp"></span>
+    <button data-a="rtShow">Панель роутера</button>
+    <button data-a="vmSsh"${noRouter}>SSH</button>
+    <button data-a="vmCheck"${off}>${c.busy ? `<span class="spin"></span>Проверяю…` : "Проверить версии"}</button>
+    <button data-a="vmUpdate" class="${need ? "pri" : ""}"${off}${noRouter}>Обновить…</button>
+    <button data-a="vmAdd"${off}>+ ВМ…</button>
+    <button data-a="vmFolder">Папка</button>
+    ${extra && !l.default ? `<button data-a="vmForget" title="Только из этого списка: файлы не трогаются">Убрать</button>` : ""}
+  </h2>`;
+  const tbl = `<div><table><thead><tr><th>ВМ</th><th>Роль</th><th>MAC в LAN</th><th>VMware</th><th>Версия софта</th><th>Итог проверки</th><th></th></tr></thead><tbody>` +
+    l.vms.map(v => {
+      const r = rows.find(x => x.Vm === v.name);
+      const ver = r && r.Before && r.Before !== "-" ? r.Before : "";
+      const st = !v.vmx ? `<span class="muted">не указан .vmx</span>` : !v.exists ? `<span class="badge bad" title="${esc(v.vmx)}">нет файла .vmx</span>`
+        : v.running ? `<span class="ok"><span class="dot"></span>запущена</span>` : `<span class="muted"><span class="dot"></span>выключена</span>`;
+      const chk = c.busy ? `<span class="muted"><span class="spin"></span></span>`
+        : r ? `<span class="badge ${resCls(r.Result)}" title="${esc(r.Result)}" style="white-space:normal">${esc(r.Result.length > 60 ? r.Result.slice(0, 60) + "…" : r.Result)}</span>`
+        : `<span class="muted">${c.t ? "—" : "не проверялась"}</span>`;
+      return `<tr data-vm="${esc(v.name)}">
+        <td><b>${esc(v.name)}</b></td>
+        <td class="muted">${v.role === "router" ? "роутер" : v.os === "windows" ? "ведомая · Windows" : "ведомая · Ubuntu"}</td>
+        <td class="mono muted">${esc(v.mac)}</td>
+        <td title="${esc(v.vmx)}">${st}</td>
+        <td class="mono">${esc(ver)}</td>
+        <td>${chk}</td>
+        <td class="act"><button data-a="vmOpenVm"${v.exists ? "" : " disabled"} title="${esc(v.vmx)}">Открыть в VMware</button></td></tr>`;
+    }).join("") + `</tbody></table></div>`;
+  let notes = "";
+  if (busy) notes += `<div class="note warn"><span class="spin"></span>${esc(busy)}</div>`;
+  if (c.err) notes += `<div class="note bad">Проверка: ${esc(c.err)}</div>`;
+  else if (c.t && !c.busy) notes += `<div class="note muted">Проверено в ${tm(c.t)}${need ? ` — <span class="warn">есть ВМ со старой версией: «Обновить…»</span>` : ""}.` +
+    (rows.some(r => /^нет SSH/.test(r.Result)) ? ` Ведомой ВМ без SSH нужно один раз выполнить в ней: <span class="mono">sudo bash /mnt/hgfs/vmgw/client-setup.sh --ssh</span>` : "") + `</div>`;
+  if (vm.kitStamp && l.kitStamp && l.kitStamp !== vm.kitStamp)
+    notes += `<div class="note muted">В папке лаборатории комплект <span class="mono">${esc(l.kitStamp)}</span>; «Обновить…» заменит его на <span class="mono">${esc(vm.kitStamp)}</span>.</div>`;
+  return `<section class="card lab" ${d}>${h}${tbl}${notes}</section>`;
+}
+
+const VA_OS = {
+  ubuntu: {name: "Ubuntu", label: "ISO Ubuntu Desktop", pick: "Образ Ubuntu Desktop", key: "vmgw:desktopIso", lab: "desktopIso",
+    hint: "Образ — только с ubuntu.com/download/desktop.",
+    note: "После установки Ubuntu назначьте ВМ профиль в панели роутера — до этого у неё нет интернета."},
+  windows: {name: "Windows", label: "ISO Windows", pick: "Образ Windows 10/11", key: "vmgw:windowsIso", lab: "windowsIso",
+    hint: "Образ — с microsoft.com/software-download. Win10 узнаётся по имени файла, иначе ВМ настраивается под Windows 11.",
+    note: "Назначьте ВМ профиль в панели роутера до установки — установщику Windows 11 нужен интернет. " +
+      "Проверку TPM 2.0 и Secure Boot установщик Windows 11 пропустит сам: к ВМ подключается маленький win11-setup.iso " +
+      "с ключами LabConfig. Софт vmgw в Windows не ставится; после установки — VMware Tools."},
+};
+function vaOsChanged() {
+  const o = VA_OS[$("#vaOs").value], l = vmLab(vmTarget);
+  $("#vaIsoL").textContent = o.label; $("#vaIsoH").textContent = o.hint; $("#vaNote").textContent = o.note;
+  $("#vaIso").value = (l && l[o.lab]) || store.get(o.key) || "";
+}
+$("#vaOs").addEventListener("change", vaOsChanged);
+
+const labOf = b => b.closest("[data-dir]").dataset.dir;
+async function vmDo(fn) { try { await fn(); } catch (e) { showErr(e); } }
+
+const vmActions = {
+  vmRefresh() { vmRefresh(); },
+  vmReadme() { vmDo(() => window.vmgwOpen("readme", "", "")); },
+  vmFolder(b) { vmDo(() => window.vmgwOpen("folder", labOf(b), "")); },
+  vmPanel(b) { vmDo(() => window.vmgwOpen("panel", labOf(b), "")); },
+  vmSsh(b) { vmDo(() => window.vmgwOpen("ssh", labOf(b), "")); },
+  vmOpenVm(b) { vmDo(() => window.vmgwOpen("vm", labOf(b), b.closest("tr").dataset.vm)); },
+  vmCheck(b) { vmCheck(labOf(b)); },
+  async vmAddLab() {
+    try {
+      const dir = await window.pickLabFolder("Папка лаборатории vmgw (в ней lab.json)");
+      if (!dir) return;
+      if (vmLab(dir)) { showErr("Эта лаборатория уже в списке"); return; }
+      store.set("vmgw:labs", [...vmExtra(), dir]);
+      await vmRefresh();
+      const l = vmLab(dir);
+      if (!l || l.err) { store.set("vmgw:labs", vmExtra().filter(d => !sameDir(d, dir))); showErr(`${dir}: ${l ? l.err : "не лаборатория"}`); vmRefresh(); return; }
+      vmCheck(dir, true);
+    } catch (e) { showErr(e); }
+  },
+  vmForget(b) {
+    const dir = labOf(b);
+    store.set("vmgw:labs", vmExtra().filter(d => !sameDir(d, dir)));
+    vmRefresh();
+  },
+  vmAdd(b) {
+    vmTarget = labOf(b);
+    $("#vaLab").textContent = labName(vmTarget);
+    $("#vaName").value = "";
+    $("#vaOs").value = store.get("vmgw:clientOs") === "windows" ? "windows" : "ubuntu";
+    vaOsChanged();
+    $("#mVmAdd").classList.add("on"); $("#vaName").focus();
+  },
+  async vaPick() {
+    try { const p = await window.pickIso(VA_OS[$("#vaOs").value].pick); if (p) $("#vaIso").value = p; } catch (e) { showErr(e); }
+  },
+  async vaSave() {
+    const dir = vmTarget, name = $("#vaName").value.trim(), iso = $("#vaIso").value.trim(), open = $("#vaOpen").checked, os = $("#vaOs").value, o = VA_OS[os];
+    if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) { showErr("Имя ВМ: латиница в нижнем регистре, цифры, дефис (до 31 символа)"); $("#vaName").focus(); return; }
+    if (vmLab(dir)?.vms.some(v => v.name === name)) { showErr(`ВМ ${name} уже есть в лаборатории`); return; }
+    if (!iso) { showErr("Выберите " + o.label); return; }
+    closeModals();
+    store.set("vmgw:clientOs", os); store.set(o.key, iso);
+    vmBusy[dir] = `Создаю ВМ ${name}…`; renderVm();
+    vmLogAdd(`Новая ВМ ${name} (${o.name}) в ${labName(dir)}`);
+    try {
+      const out = await native("vmgwAddClientAsync", {Dir: dir, Name: name, Iso: iso, Os: os, Open: open});
+      vmLogAdd(out || "готово");
+    } catch (e) { const m = String(e && e.message || e); vmLogAdd("ОШИБКА: " + m); showErr(m); }
+    finally { delete vmBusy[dir]; $("#vmLogBox").open = true; await vmRefresh(); }
+  },
+  vmUpdate(b) {
+    vmTarget = labOf(b);
+    $("#vuLab").textContent = labName(vmTarget);
+    for (const id of ["#vuRouter", "#vuAwg", "#vuForce"]) $(id).checked = false;
+    $("#mVmUpd").classList.add("on");
+  },
+  async vuGo() {
+    const dir = vmTarget, a = {Dir: dir, RouterOnly: $("#vuRouter").checked, RebuildAwg: $("#vuAwg").checked, Force: $("#vuForce").checked};
+    closeModals();
+    vmBusy[dir] = "Идёт обновление в отдельном окне консоли — введите там пароль sudo. Когда окно закроется, версии проверятся заново.";
+    renderVm();
+    vmLogAdd(`Обновление ${labName(dir)}` + (a.RouterOnly ? ", только роутер" : "") + (a.RebuildAwg ? ", пересборка AmneziaWG" : "") + (a.Force ? ", принудительно" : ""));
+    try { await native("vmgwUpdateAsync", a); vmLogAdd(`Окно обновления ${labName(dir)} закрыто`); }
+    catch (e) { const m = String(e && e.message || e); vmLogAdd("ОШИБКА: " + m); showErr(m); }
+    finally { delete vmBusy[dir]; await vmRefresh(); vmCheck(dir); }
+  },
+  async vmNewLab() {
+    let d = {};
+    try { d = await window.vmgwDefaults(); } catch (e) {}
+    let dir = d.dir || "";
+    for (let i = 2; dir && vmLab(dir); i++) dir = d.dir + i;
+    $("#vnDir").value = dir;
+    $("#vnSrv").value = store.get("vmgw:serverIso") || "";
+    $("#vnDesk").value = store.get("vmgw:desktopIso") || "";
+    $("#vnClients").value = "ws1";
+    $("#vnMgmt").value = "VMnet1"; $("#vnLan").value = "192.168.150.0/24";
+    $("#vnSsh").value = "22"; $("#vnPanel").value = "8088";
+    $("#vnAdmin").value = ""; $("#vnLocal").value = "auto";
+    $("#mVmNew").classList.add("on");
+  },
+  async vnPickDir() { try { const p = await window.pickLabFolder("Папка новой лаборатории"); if (p) $("#vnDir").value = p; } catch (e) { showErr(e); } },
+  async vnPickSrv() { try { const p = await window.pickIso("Образ Ubuntu Server для роутера"); if (p) $("#vnSrv").value = p; } catch (e) { showErr(e); } },
+  async vnPickDesk() { try { const p = await window.pickIso("Образ Ubuntu Desktop для ведомых ВМ"); if (p) $("#vnDesk").value = p; } catch (e) { showErr(e); } },
+  async vnGo() {
+    const v = id => $(id).value.trim();
+    const a = {Dir: v("#vnDir"), ServerIso: v("#vnSrv"), DesktopIso: v("#vnDesk"), Clients: v("#vnClients"),
+      MgmtVnet: v("#vnMgmt"), LanNet: v("#vnLan"), SshPort: parseInt(v("#vnSsh"), 10) || 0, PanelPort: parseInt(v("#vnPanel"), 10) || 0,
+      AdminNets: v("#vnAdmin"), LocalNets: v("#vnLocal")};
+    if (!a.Dir) { showErr("Укажите папку лаборатории"); return; }
+    if (!a.ServerIso) { showErr("Выберите ISO Ubuntu Server"); return; }
+    if (a.Clients && !a.DesktopIso) { showErr("Выберите ISO Ubuntu Desktop для ведомых ВМ"); return; }
+    closeModals();
+    store.set("vmgw:serverIso", a.ServerIso);
+    if (a.DesktopIso) store.set("vmgw:desktopIso", a.DesktopIso);
+    const def = await window.vmgwDefaults().catch(() => ({}));
+    if (!sameDir(a.Dir, def.dir || "") && !vmExtra().some(d => sameDir(d, a.Dir))) store.set("vmgw:labs", [...vmExtra(), a.Dir]);
+    vmBusy[a.Dir] = "Создание лаборатории идёт в отдельном окне консоли.";
+    vmLogAdd(`Новая лаборатория в ${a.Dir}`);
+    try { await native("vmgwNewLabAsync", a); vmLogAdd(`Окно создания лаборатории закрыто`); }
+    catch (e) { const m = String(e && e.message || e); vmLogAdd("ОШИБКА: " + m); showErr(m); }
+    finally { delete vmBusy[a.Dir]; await vmRefresh(); }
+  },
+};
+Object.assign(actions, vmActions);
+
+// ================================================================ панель роутера
+// Окно ходит в JSON API веб-панели роутера (vmgwRouterAsync) и рисует её
+// здесь. Разделы — по тому, что роутер вернул в status, действия уходят ему
+// как есть: роутер любой версии показывает ровно свои функции.
+const rt = {};         // папка → {state, S, out, base, saved, busy, loading, t}
+let rtSel = store.get("vmgw:router") || "";
+const RT_KNOWN = ["router", "hosts", "unknown", "tunnels", "corporate", "profiles", "forwards"];
+const rtLabs = () => vm ? vm.labs.filter(l => !l.err) : [];
+const rtCur = () => { const ls = rtLabs(); return ls.find(l => sameDir(l.dir, rtSel)) || ls[0]; };
+// Роутер выключен — по vmrun; если VMware не отвечает или .vmx не найден, всё равно пробуем связаться.
+function rtOff(l) { const r = l.vms.find(v => v.role === "router"); return !!(vm.vmware && !vm.vmwareErr && r && r.exists && !r.running); }
+const rtBytes = n => { const u = ["B", "KiB", "MiB", "GiB", "TiB"]; let i = 0; n = +n || 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + " " + u[i]; };
+const rtAge = s => s == null ? null : s < 120 ? s + " с назад" : s < 7200 ? Math.round(s / 60) + " мин назад" : Math.round(s / 3600) + " ч назад";
+const rtList = a => Array.isArray(a) ? a : [];
+const rtFill = (id, html) => { const e = document.getElementById(id); if (e) put(e, html); };
+const rtEmpty = (n, text) => `<tr><td colspan="${n}" class="muted">${text}</td></tr>`;
+
+function rtTake(r, res) {
+  r.state = res.state; r.out = res.output || ""; r.base = res.base || r.base; r.saved = !!res.saved;
+  if (res.state === "ok" && res.data) { r.S = res.data; r.t = Date.now(); }
+  if (res.state !== "ok") r.S = null;
+}
+
+async function rtRefresh(dir) {
+  const l = vmLab(dir);
+  if (!l || l.err) return;
+  const r = rt[dir] || (rt[dir] = {});
+  if (r.loading || r.busy) return;
+  if (rtOff(l)) { r.state = null; r.S = null; renderRt(); return; }
+  r.loading = true; renderRt();
+  try {
+    const res = await native("vmgwRouterAsync", {Dir: dir, Op: "status"});
+    if (res.state === "ok" && !res.ok) { r.state = "err"; r.out = res.output || "контроллер роутера не ответил"; r.S = null; }
+    else rtTake(r, res);
+  } catch (e) { r.state = "down"; r.out = String(e && e.message || e); r.S = null; }
+  finally { r.loading = false; renderRt(); }
+}
+
+// rtAct — действие роутера; true — выполнено.
+async function rtAct(dir, body, label) {
+  const r = rt[dir] || (rt[dir] = {});
+  if (r.busy) return false;
+  r.busy = label; renderRt();
+  vmLogAdd(`Роутер ${labName(dir)}: ${label}…`);
+  let ok = false;
+  try {
+    const res = await native("vmgwRouterAsync", {Dir: dir, Op: "action", Body: body});
+    if (res.state !== "ok") { rtTake(r, res); vmLogAdd(`Роутер ${labName(dir)}: ${res.state === "login" ? "нужен вход" : res.output}`); }
+    else {
+      ok = !!res.ok;
+      vmLogAdd(`Роутер ${labName(dir)}: ${ok ? "OK" : "ОШИБКА"}${res.output ? ": " + res.output : ""}`);
+      if (!ok) showErr(res.output || "роутер отказал");
+    }
+  } catch (e) { const m = String(e && e.message || e); vmLogAdd(`Роутер ${labName(dir)}: ОШИБКА: ${m}`); showErr(m); }
+  r.busy = "";
+  document.querySelectorAll("#rtBody [id]").forEach(e => e._html = null); // вернуть флажки и списки к состоянию роутера
+  await rtRefresh(dir);
+  return ok;
+}
+
+function renderRt() {
+  const card = $("#rtCard"), ls = rtLabs();
+  card.hidden = !ls.length;
+  if (!ls.length) return;
+  const l = rtCur(), dir = l.dir, r = rt[dir] || {}, off = rtOff(l);
+  card.dataset.dir = dir;
+  put($("#rtTabs"), ls.length > 1
+    ? `<nav class="tabs" style="display:inline-flex">${ls.map(x => `<button data-a="rtTab" data-dir="${esc(x.dir)}" class="${x === l ? "on" : ""}">${esc(labName(x.dir))}</button>`).join("")}</nav>`
+    : `<span class="sub muted" style="font-weight:400">${esc(labName(dir))}</span>`);
+  const kind = off ? "off" : r.state || "wait";
+  const badge = r.busy ? `<span class="badge warn"><span class="spin"></span>${esc(r.busy)}</span>`
+    : kind === "ok" ? `<span class="badge ok" title="обновлено в ${r.t ? tm(r.t) : "—"}">на связи</span>`
+    : kind === "off" ? `<span class="badge muted">роутер выключен</span>`
+    : kind === "login" ? `<span class="badge warn">нужен вход</span>`
+    : kind === "wait" ? `<span class="badge muted"><span class="spin"></span>подключаюсь</span>`
+    : `<span class="badge bad">нет связи</span>`;
+  put($("#rtHead"), badge +
+    `<button data-a="rtRefresh"${off || r.loading ? " disabled" : ""}>${r.loading ? `<span class="spin"></span>` : ""}Обновить</button>` +
+    (kind === "ok" ? `<button data-a="rtApply" title="Заново применить сохранённую конфигурацию роутера (vmgw apply)">Применить конфигурацию</button>` : "") +
+    `<button data-a="vmPanel"${off ? " disabled" : ""} title="${esc(r.base || "")}">В браузере</button>` +
+    (kind === "ok" ? `<button data-a="rtLogout" title="${r.saved ? "Выйти и забыть сохранённый пароль" : "Завершить сеанс панели"}">Выйти</button>` : ""));
+
+  const body = $("#rtBody");
+  const skel = dir + "|" + kind + "|" + (kind === "ok" && r.S ? Object.keys(r.S).sort().join(",") : "");
+  if (body._skel !== skel) { body._skel = skel; body.innerHTML = rtSkeleton(kind); }
+  body.disabled = !!r.busy;
+  if (kind === "ok" && r.S) rtRender(r.S);
+  else rtFill("rtMsg", rtMessage(kind, r));
+}
+
+function rtMessage(kind, r) {
+  if (kind === "off") return `ВМ router не запущена — панель появится, когда роутер загрузится.`;
+  if (kind === "wait") return `<span class="spin"></span>Связываюсь с роутером…`;
+  if (kind === "login") return r.out ? `<span class="bad">${esc(r.out)}</span>` : `Пароль панели задан при установке роутера; сменить его — по SSH: <span class="mono">sudo vmgw panel-password</span>.`;
+  if (kind === "err") return `<span class="bad">Роутер ответил ошибкой: ${esc(r.out)}</span>`;
+  return `<span class="bad">${esc(r.out)}</span><br><span class="muted">Если ВМ router только что включилась — подождите минуту. Панель роутера пускает только с адресов сети управления и AdminNets.</span>`;
+}
+
+function rtSkeleton(kind) {
+  if (kind === "off") return `<div class="note" id="rtMsg"></div><div class="row"><button data-a="rtVm">Открыть router в VMware</button></div>`;
+  if (kind === "login") return `<div class="note" id="rtMsg"></div>
+    <div class="row" data-enter><input type="password" id="rtPw" placeholder="Пароль панели роутера" autocomplete="off" style="width:240px">
+      <label class="chk" style="align-items:center"><input type="checkbox" id="rtRemember">запомнить (зашифровано для этой учётной записи Windows)</label>
+      <button class="pri" data-a="rtLogin">Войти</button></div>`;
+  if (kind !== "ok") return `<div class="note" id="rtMsg"></div>`;
+  const S = rt[rtCur().dir].S, has = k => k in S;
+  let h = `<div class="facts" id="rtFacts"></div>`;
+  if (has("hosts")) h += `<div class="rtsec"><h3>Хосты
+      <span class="hint">ВМ сегмента свободно общаются между собой и с хостом Windows. В интернет каждая выходит только через свой профиль: нет профиля или туннель не работает — интернета нет.</span></h3>
+    <div><table><thead><tr><th>Хост</th><th>IP / MAC</th><th>Политика</th><th title="Доступ к домашней сети за WAN (local_nets)">Домашняя сеть</th><th>Пробросы</th><th></th></tr></thead><tbody id="rtHosts"></tbody></table></div>
+    ${has("unknown") ? `<h3 style="font-weight:500">ВМ без профиля (интернета нет)</h3><div id="rtUnknown"></div>` : ""}
+    <div class="row" data-enter><input type="text" id="rtHName" placeholder="имя (латиница)" spellcheck="false" style="width:150px">
+      <input type="text" id="rtHMac" class="mono" placeholder="MAC 00:50:56:…" spellcheck="false" style="width:150px">
+      <input type="text" id="rtHIp" class="mono" placeholder="IP (необязательно)" spellcheck="false" style="width:140px">
+      <button class="pri" data-a="rtHostAdd">Добавить хост</button></div></div>`;
+  if (has("tunnels")) h += `<div class="rtsec"><h3>Туннели <span class="sp" style="flex:1"></span><button data-a="rtRestart">Перезапустить все</button>
+      <span class="hint">Туннель поднимается, когда хотя бы один хост выбрал его профиль.</span></h3>
+    <div><table><thead><tr><th>Интерфейс</th><th>Профиль</th><th>Сервер</th><th>Рукопожатие</th><th>Трафик</th><th>Хосты</th><th></th></tr></thead><tbody id="rtTunnels"></tbody></table></div></div>`;
+  if (has("corporate")) h += `<div class="rtsec"><h3>Транспорт туннелей
+      <span class="hint">Туннели хостов идут напрямую через WAN роутера или все вместе через корпоративный OpenVPN.</span></h3>
+    <div id="rtCorp"></div>
+    <details><summary>Корпоративный профиль и учётные данные</summary>
+      <div class="row"><button data-a="rtCorpImport">Загрузить .ovpn…</button></div>
+      <div class="row" data-enter><input type="text" id="rtCLogin" placeholder="логин" autocomplete="off" spellcheck="false" style="width:180px">
+        <input type="password" id="rtCPass" placeholder="пароль" autocomplete="off" style="width:180px">
+        <button class="pri" data-a="rtCorpAuth">Сохранить</button></div></details></div>`;
+  if (has("profiles")) h += `<div class="rtsec"><h3>Профили AmneziaWG <span class="sp" style="flex:1"></span><button data-a="rtProfImport">Загрузить профиль…</button></h3>
+    <div><table><thead><tr><th>Профиль</th><th>Туннель</th><th>Сервер</th><th>Адрес</th><th>Хосты</th><th></th></tr></thead><tbody id="rtProfiles"></tbody></table></div></div>`;
+  if (has("forwards")) h += `<div class="rtsec"><h3>Проброс портов <span class="hint" id="rtFwdHint"></span></h3>
+    <div><table><thead><tr><th>Протокол</th><th>Внешний порт</th><th>Хост</th><th>Порт хоста</th><th>Откуда</th><th></th></tr></thead><tbody id="rtFwd"></tbody></table></div>
+    <div class="row" data-enter><select id="rtFProto"><option>tcp</option><option>udp</option></select>
+      <input type="number" id="rtFPort" min="1" max="65535" placeholder="внешний порт">
+      <select id="rtFHost"></select>
+      <input type="number" id="rtFTo" min="1" max="65535" placeholder="порт хоста">
+      <select id="rtFSrc"><option value="mgmt">только хост Windows</option><option value="local">+ локальные сети</option></select>
+      <button class="pri" data-a="rtFwdAdd">Добавить</button></div></div>`;
+  if (Object.keys(S).some(k => !RT_KNOWN.includes(k)))
+    h += `<details class="rtsec"><summary>Прочие данные роутера</summary><pre class="log" id="rtExtra"></pre></details>`;
+  return h;
+}
+
+function rtPolicy(h, profiles) {
+  const cur = h.mode === "tunnel" ? "tunnel:" + h.profile : h.mode;
+  const o = [["blocked", "без интернета"]];
+  const names = profiles.filter(p => p.valid !== false).map(p => p.name);
+  if (h.mode === "tunnel" && h.profile && !names.includes(h.profile)) names.push(h.profile);
+  for (const n of names) o.push(["tunnel:" + n, "туннель: " + n]);
+  o.push(["direct", "напрямую через WAN (без VPN)"]);
+  if (!o.some(x => x[0] === cur)) o.push([cur, String(h.mode)]);
+  return `<select data-a="rtPolicy" data-host="${esc(h.name)}" data-cur="${esc(cur)}" style="max-width:240px">` +
+    o.map(([v, t]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+}
+
+function rtRender(S) {
+  const R = S.router || {}, wan = R.wan || {}, f = (k, v) => `<div><div class="k">${k}</div><div class="v mono">${esc(v)}</div></div>`;
+  rtFill("rtFacts", (R.mgmt_addr ? f("Управление", R.mgmt_addr) : "") + (R.ssh_port ? f("SSH", ":" + R.ssh_port) : "") +
+    (R.wan ? f("WAN", (wan.address || "нет адреса") + " → " + (wan.gateway || "нет шлюза")) : "") +
+    (R.lan_net ? f("LAN", R.lan_net) : "") + (R.local_nets ? f("Домашние сети", rtList(R.local_nets).join(", ") || "нет") : ""));
+  const hosts = rtList(S.hosts), profiles = rtList(S.profiles);
+  rtFill("rtHosts", hosts.map(h => `<tr>
+      <td><b class="${h.online ? "ok" : ""}" title="${h.online ? "в сети" : esc(h.neigh || "не видна")}">${esc(h.name)}</b>${h.hostname ? `<br><span class="muted">${esc(h.hostname)}</span>` : ""}</td>
+      <td class="mono">${esc(h.ip)}<br><span class="muted">${esc(h.mac)}</span></td>
+      <td>${rtPolicy(h, profiles)}</td>
+      <td>${"local" in h ? `<input type="checkbox" data-a="rtLocal" data-host="${esc(h.name)}"${h.local ? " checked" : ""}>` : `<span class="muted">—</span>`}</td>
+      <td class="mono">${esc(rtList(h.forwards).map(x => x.proto + " " + x.port + "→" + x.to_port).join(", ") || "—")}</td>
+      <td class="act"><button class="danger" data-a="rtHostDel" data-host="${esc(h.name)}">Удалить</button></td></tr>`).join("")
+    || rtEmpty(6, "Хостов нет. Включите ВМ в LAN-сегменте — она появится ниже."));
+  const unk = rtList(S.unknown);
+  rtFill("rtUnknown", unk.length ? `<div><table><tbody>` + unk.map(d => `<tr>
+      <td class="mono">${esc(d.ip)}</td><td class="mono muted">${esc(d.mac)}</td><td>${esc(d.hostname || "")}</td>
+      <td class="act"><button data-a="rtUseUnknown" data-mac="${esc(d.mac)}" data-name="${esc(d.hostname || "")}" data-ip="${esc(d.ip || "")}">Добавить как хост</button></td></tr>`).join("") + `</tbody></table></div>`
+    : `<div class="note muted" style="border:0">Все ВМ сегмента зарегистрированы.</div>`);
+  rtFill("rtTunnels", rtList(S.tunnels).map(t => {
+    const a = rtAge(t.handshake_age), good = t.up && t.handshake_age != null && t.handshake_age < 180;
+    return `<tr><td class="mono">${esc(t.dev)}</td><td>${esc(t.profile)}</td><td class="mono">${esc(t.endpoint || "—")}</td>
+      <td class="${good ? "ok" : "bad"}">${esc(t.up ? (a || "не было") : "не поднят")}</td>
+      <td class="mono">↓ ${rtBytes(t.rx)}  ↑ ${rtBytes(t.tx)}</td><td>${esc(rtList(t.hosts).join(", ") || "—")}</td>
+      <td class="act"><button data-a="rtRestart" data-p="${esc(t.profile)}">Перезапустить</button></td></tr>`;
+  }).join("") || rtEmpty(7, "Нет активных туннелей."));
+  if (S.corporate) {
+    const c = S.corporate, k = (n, v, cls) => `<div><div class="k">${n}</div><div class="v ${cls || ""}">${esc(v)}</div></div>`;
+    rtFill("rtCorp", `<div class="facts">` +
+      k("Режим", c.enabled ? "через корпоративный VPN" : "напрямую через WAN", c.enabled ? (c.address ? "ok" : "bad") : "") +
+      k("Профиль", c.profile ? (c.error ? "ошибка: " + c.error : "загружен" + (c.needs_auth ? (c.auth ? ", логин сохранён" : ", нужен логин/пароль") : "")) : "не загружен", c.error ? "bad" : "") +
+      (c.enabled ? k("OpenVPN", (c.service || "") + (c.address ? ", адрес " + c.address : ", нет адреса — туннели хостов без выхода"), c.address ? "ok" : "bad") : "") +
+      `</div><div class="row"><button data-a="rtCorpOn"${!c.profile || c.enabled ? " disabled" : ""}>Через корпоративный VPN</button>
+        <button data-a="rtCorpOff"${!c.enabled ? " disabled" : ""}>Напрямую через WAN</button></div>`);
+  }
+  rtFill("rtProfiles", profiles.map(p => `<tr><td><b>${esc(p.name)}</b></td><td class="mono">${p.id != null ? "awg" + esc(p.id) : "—"}</td>
+      ${p.valid === false ? `<td class="bad">${esc(p.error || "ошибка")}</td>` : `<td class="mono">${esc(p.endpoint || "—")}</td>`}
+      <td class="mono">${esc(p.address || "—")}</td><td>${esc(rtList(p.used_by).join(", ") || "—")}</td>
+      <td class="act">${rtList(p.used_by).length ? "" : `<button class="danger" data-a="rtProfDel" data-p="${esc(p.name)}">Удалить</button>`}</td></tr>`).join("")
+    || rtEmpty(6, "Профилей нет: «Загрузить профиль…» — файл .vpn или .conf AmneziaWG."));
+  rtFill("rtFwdHint", R.mgmt_addr ? `Подключение к ${esc(R.mgmt_addr)}:ВНЕШНИЙ_ПОРТ с хоста Windows попадает на хост:ПОРТ.` : "");
+  rtFill("rtFwd", rtList(S.forwards).map(x => `<tr><td>${esc(x.proto)}</td><td class="mono">${esc(x.port)}</td><td>${esc(x.host)}</td><td class="mono">${esc(x.to_port)}</td>
+      <td>${x.source === "local" ? "хост Windows + локальные сети" : "только хост Windows"}</td>
+      <td class="act"><button class="danger" data-a="rtFwdDel" data-proto="${esc(x.proto)}" data-port="${esc(x.port)}">Удалить</button></td></tr>`).join("")
+    || rtEmpty(6, "Пробросов нет."));
+  const fh = $("#rtFHost");
+  if (fh) {
+    const names = hosts.map(h => h.name), cur = fh.value;
+    if (fh._names !== names.join("\n")) {
+      fh._names = names.join("\n");
+      fh.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join("") || `<option value="">нет хостов</option>`;
+      if (names.includes(cur)) fh.value = cur;
+    }
+  }
+  const extra = Object.fromEntries(Object.entries(S).filter(([k]) => !RT_KNOWN.includes(k)));
+  rtFill("rtExtra", esc(JSON.stringify(extra, null, 2)));
+}
+
+const rtDir = b => labOf(b);
+const rtVal = id => ($(id)?.value || "").trim();
+const rtActions = {
+  rtShow(b) {
+    rtSel = labOf(b); store.set("vmgw:router", rtSel); renderRt(); rtRefresh(rtSel);
+    $("#rtCard").scrollIntoView({behavior: "smooth", block: "start"});
+  },
+  rtTab(b) { rtSel = b.dataset.dir; store.set("vmgw:router", rtSel); renderRt(); rtRefresh(rtSel); },
+  rtRefresh(b) { rtRefresh(rtDir(b)); },
+  rtVm(b) { vmDo(() => window.vmgwOpen("vm", rtDir(b), "router")); },
+  async rtLogin(b) {
+    const dir = rtDir(b), pw = $("#rtPw").value, r = rt[dir] || (rt[dir] = {});
+    if (!pw) { $("#rtPw").focus(); return; }
+    r.busy = "вход"; renderRt();
+    try { rtTake(r, await native("vmgwRouterAsync", {Dir: dir, Op: "login", Password: pw, Remember: $("#rtRemember").checked})); }
+    catch (e) { showErr(e); }
+    r.busy = ""; renderRt();
+    if (r.state === "login") { $("#rtPw")?.select(); }
+  },
+  async rtLogout(b) {
+    const dir = rtDir(b), r = rt[dir] || (rt[dir] = {});
+    if (r.saved && !confirm("Выйти из панели роутера? Сохранённый пароль будет забыт.")) return;
+    try { rtTake(r, await native("vmgwRouterAsync", {Dir: dir, Op: "logout"})); } catch (e) { showErr(e); }
+    renderRt();
+  },
+  rtApply(b) { rtAct(rtDir(b), {action: "apply"}, "применение конфигурации"); },
+  rtRestart(b) {
+    const p = b.dataset.p;
+    rtAct(rtDir(b), p ? {action: "restart", profile: p} : {action: "restart"}, p ? `перезапуск туннеля ${p}` : "перезапуск всех туннелей");
+  },
+  rtPolicy(s) {
+    const v = s.value, host = s.dataset.host, text = s.options[s.selectedIndex].text;
+    if (v === "direct" && !confirm(`Хост ${host} будет выходить в интернет напрямую, без VPN. Продолжить?`)) { s.value = s.dataset.cur; return; }
+    rtAct(rtDir(s), v.startsWith("tunnel:") ? {action: "host-set", name: host, mode: "tunnel", profile: v.slice(7)} : {action: "host-set", name: host, mode: v},
+      `политика ${host} → ${text}`);
+  },
+  rtLocal(c) { rtAct(rtDir(c), {action: "host-set", name: c.dataset.host, local: c.checked}, `домашняя сеть ${c.dataset.host}: ${c.checked ? "да" : "нет"}`); },
+  rtHostDel(b) {
+    const h = b.dataset.host;
+    if (confirm(`Удалить хост ${h} и его пробросы? ВМ останется без интернета.`)) rtAct(rtDir(b), {action: "host-del", name: h}, `удаление хоста ${h}`);
+  },
+  rtUseUnknown(b) {
+    $("#rtHMac").value = b.dataset.mac;
+    $("#rtHName").value = b.dataset.name.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/^-+/, "").slice(0, 31);
+    $("#rtHName").focus(); $("#rtHName").select();
+  },
+  async rtHostAdd(b) {
+    const name = rtVal("#rtHName"), mac = rtVal("#rtHMac"), ip = rtVal("#rtHIp");
+    if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) { showErr("Имя хоста: латиница в нижнем регистре, цифры, дефис (до 31 символа)"); $("#rtHName").focus(); return; }
+    if (!mac) { showErr("Укажите MAC"); $("#rtHMac").focus(); return; }
+    if (await rtAct(rtDir(b), {action: "host-add", name, mac, ip}, `добавление хоста ${name}`))
+      for (const id of ["#rtHName", "#rtHMac", "#rtHIp"]) if ($(id)) $(id).value = "";
+  },
+  async rtProfImport(b) {
+    const dir = rtDir(b);
+    try { const f = await window.pickRouterFile("profile"); if (f) rtAct(dir, {action: "import", name: f.name, data: f.data}, `загрузка профиля ${f.name}`); }
+    catch (e) { showErr(e); }
+  },
+  rtProfDel(b) {
+    const p = b.dataset.p;
+    if (confirm(`Удалить профиль ${p}?`)) rtAct(rtDir(b), {action: "profile-delete", name: p}, `удаление профиля ${p}`);
+  },
+  rtCorpOn(b) {
+    if (confirm("Все туннели хостов пойдут через корпоративный VPN. Если он не подключится, хосты останутся без интернета. Продолжить?"))
+      rtAct(rtDir(b), {action: "corp-set", enabled: true}, "включение корпоративного транспорта");
+  },
+  rtCorpOff(b) { rtAct(rtDir(b), {action: "corp-set", enabled: false}, "выключение корпоративного транспорта"); },
+  async rtCorpImport(b) {
+    const dir = rtDir(b);
+    try { const f = await window.pickRouterFile("corp"); if (f) rtAct(dir, {action: "corp-import", data: f.data}, `загрузка корпоративного профиля ${f.name}`); }
+    catch (e) { showErr(e); }
+  },
+  async rtCorpAuth(b) {
+    const login = rtVal("#rtCLogin"), password = $("#rtCPass").value;
+    if (!login) { $("#rtCLogin").focus(); return; }
+    if (await rtAct(rtDir(b), {action: "corp-credentials", login, password}, "сохранение учётных данных корпоративного VPN")) {
+      $("#rtCLogin").value = ""; $("#rtCPass").value = "";
+    }
+  },
+  async rtFwdAdd(b) {
+    const port = parseInt(rtVal("#rtFPort"), 10), to = parseInt(rtVal("#rtFTo"), 10), host = $("#rtFHost").value;
+    if (!(port >= 1 && port <= 65535)) { showErr("Внешний порт: от 1 до 65535"); $("#rtFPort").focus(); return; }
+    if (!host) { showErr("Сначала добавьте хост"); return; }
+    if (!(to >= 1 && to <= 65535)) { showErr("Порт хоста: от 1 до 65535"); $("#rtFTo").focus(); return; }
+    if (await rtAct(rtDir(b), {action: "fwd-add", proto: $("#rtFProto").value, port, host, to_port: to, source: $("#rtFSrc").value}, `проброс ${port} → ${host}:${to}`)) {
+      $("#rtFPort").value = ""; $("#rtFTo").value = "";
+    }
+  },
+  rtFwdDel(b) {
+    const proto = b.dataset.proto, port = +b.dataset.port;
+    if (confirm(`Удалить проброс ${proto} ${port}?`)) rtAct(rtDir(b), {action: "fwd-del", proto, port}, `удаление проброса ${proto} ${port}`);
+  },
+};
+Object.assign(actions, rtActions);
+// Enter в поле формы панели — её основная кнопка.
+document.addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.target.tagName !== "INPUT") return;
+  const row = e.target.closest("#rtBody [data-enter]");
+  if (row) { e.preventDefault(); row.querySelector("button.pri")?.click(); }
+});
+
+// ---- вкладки ----
+let vmTimer = 0;
+const vmSeen = new Set();   // лаборатории, проверенные при открытии вкладки
+function setTab(t) {
+  if (t !== "vm") t = "sbx";
+  document.body.dataset.tab = t;
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  store.set("tab", t === "sbx" ? null : t);
+  clearInterval(vmTimer);
+  if (t === "vm") {
+    const rtTick = () => { const l = rtCur(); if (l) rtRefresh(l.dir); };
+    vmRefresh().then(() => {
+      for (const l of vm ? vm.labs : []) if (!l.err && !vmSeen.has(l.dir)) { vmSeen.add(l.dir); vmCheck(l.dir, true); }
+      rtTick();
+    });
+    vmTimer = setInterval(() => { if (!document.hidden) vmRefresh().then(rtTick); }, 5000);
+  }
+}
+document.querySelector(".tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) setTab(b.dataset.tab); });
+$("#vaName").addEventListener("keydown", e => { if (e.key === "Enter") actions.vaSave(); });
+
 function closeModals() { document.querySelectorAll(".modal.on").forEach(m => m.classList.remove("on")); $("#pText").value = ""; }
 
 document.addEventListener("click", e => {
@@ -540,7 +1234,7 @@ $("#rnName").addEventListener("keydown", e => { if (e.key === "Enter") actions.r
 $("#logBox").addEventListener("toggle", refreshLog);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModals(); });
 
-loadUI().finally(() => { refresh(); setInterval(refresh, 1000); });
+loadUI().finally(() => { setTab(store.get("tab")); refresh(); setInterval(refresh, 1000); });
 </script>
 </body>
 </html>

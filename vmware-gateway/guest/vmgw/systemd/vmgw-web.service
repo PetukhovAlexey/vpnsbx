@@ -1,0 +1,16 @@
+[Unit]
+Description=vmgw: web panel
+Wants=network-online.target
+After=network-online.target vmgw.service
+
+[Service]
+User=vmgw-web
+Group=vmgw-web
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vmgw/vmgw-web.py
+Restart=on-failure
+RestartSec=3
+# No ProtectSystem/NoNewPrivileges here: the panel calls `sudo vmgw api`, and
+# the controller started by sudo inherits this unit's mount namespace.
+
+[Install]
+WantedBy=multi-user.target

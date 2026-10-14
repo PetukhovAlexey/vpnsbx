@@ -1,0 +1,10 @@
+* text=auto
+guest/** text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.iso binary
+*.vmdk binary

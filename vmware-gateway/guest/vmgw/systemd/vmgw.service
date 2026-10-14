@@ -1,0 +1,13 @@
+[Unit]
+Description=vmgw: apply gateway configuration (firewall, policy routing, tunnels)
+Wants=network-online.target
+After=network-online.target nftables.service dnsmasq.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/vmgw apply
+ExecStop=/usr/local/sbin/vmgw stop
+
+[Install]
+WantedBy=multi-user.target

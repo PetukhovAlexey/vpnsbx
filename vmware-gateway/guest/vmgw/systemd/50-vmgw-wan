@@ -1,0 +1,4 @@
+#!/bin/sh
+# networkd-dispatcher hook (routable.d): WAN got an address or a new gateway.
+[ "$IFACE" = "wan0" ] || exit 0
+/usr/local/sbin/vmgw apply >/dev/null 2>&1 || true

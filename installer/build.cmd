@@ -5,7 +5,7 @@ rem   dotnet tool install --global wix --version "6.*"
 rem   wix extension add -g WixToolset.Util.wixext/6.0.2
 rem   wix extension add -g WixToolset.BootstrapperApplications.wixext/6.0.2
 setlocal
-set VERSION=0.1.2
+set VERSION=0.1.5
 set DRIVER=Windows.Packet.Filter.3.6.2.1.x64.msi
 set DRIVER_URL=https://github.com/wiresock/ndisapi/releases/download/v3.6.2/%DRIVER%
 set DRIVER_SHA256=9c388c0b7f189f7fa98720bae2caecf7d64f30910838b80b438ecf8956b8502c
@@ -20,6 +20,9 @@ go run github.com/tc-hib/go-winres@v0.3.3 make --in winres\svc.json --out cmd\vp
 go run github.com/tc-hib/go-winres@v0.3.3 make --in winres\ui.json --out cmd\vpnsbx-ui\rsrc --arch amd64 --product-version %VERSION% --file-version %VERSION% || exit /b 1
 go build -trimpath -ldflags "-s -w" -o "%OUT%\vpnsbx.exe" .\cmd\vpnsbx || exit /b 1
 go build -trimpath -ldflags "-s -w -H windowsgui" -o "%OUT%\vpnsbx-ui.exe" .\cmd\vpnsbx-ui || exit /b 1
+
+rem Комплект vmgw (vmware-gateway) входит в msi целиком: без кэша Python.
+for /d /r vmware-gateway %%d in (__pycache__) do if exist "%%d" rd /s /q "%%d"
 
 wix build -arch x64 -ext WixToolset.Util.wixext -d Version=%VERSION% -d BinDir="%OUT%" -o "%OUT%\vpnsbx-%VERSION%.msi" installer\Package.wxs || exit /b 1
 

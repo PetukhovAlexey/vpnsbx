@@ -1,6 +1,7 @@
 <!--
   VPN-песочница: служба vpnsbx (фильтр, LocalSystem, автозапуск) и окно
-  vpnsbx-ui (меню «Пуск», значок в трее при входе в систему).
+  vpnsbx-ui (меню «Пуск», значок в трее при входе в систему) и комплект
+  VMware-контура vmgw (vmware-gateway -> vmgw: вкладка «VMware-контур» окна).
   Драйвер Windows Packet Filter не входит: его ставит vpnsbx-setup.exe (Bundle.wxs).
   Сборка: installer\build.cmd
   Проверка: wix msi validate -sice ICE43 -sice ICE57 dist\vpnsbx-<версия>.msi
@@ -20,13 +21,19 @@
     <Property Id="ARPNOMODIFY" Value="1" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="VPN-песочница" />
+      <Directory Id="INSTALLFOLDER" Name="VPN-песочница">
+        <Directory Id="VMGWFOLDER" Name="vmgw" />
+      </Directory>
     </StandardDirectory>
 
     <Feature Id="Main" Title="VPN-песочница">
       <ComponentRef Id="Service" />
       <ComponentRef Id="UI" />
       <ComponentRef Id="Autorun" />
+      <!-- Только скрипты из репозитория: профилей, адресов и ключей в комплекте нет. -->
+      <Files Directory="VMGWFOLDER" Include="$(sys.SOURCEFILEDIR)..\vmware-gateway\**">
+        <Exclude Files="$(sys.SOURCEFILEDIR)..\vmware-gateway\.gitattributes" />
+      </Files>
     </Feature>
 
     <DirectoryRef Id="INSTALLFOLDER">

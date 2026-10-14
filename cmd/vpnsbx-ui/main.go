@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -95,6 +96,55 @@ func main() {
 	w.Bind("dataDir", config.Dir)
 	w.Bind("loadState", loadUIState)
 	w.Bind("saveState", saveUIState)
+
+	// Вкладка «VMware-контур» (vmgw.go).
+	w.Bind("vmgwInfoAsync", func(id int, extra []string) {
+		async(w, id, func() (any, error) { return vmgwState(extra), nil })
+	})
+	w.Bind("vmgwCheckAsync", func(id int, dir string) {
+		async(w, id, func() (any, error) {
+			return withLab(dir, "проверка версий", func() (any, error) { return vmgwCheck(dir) })
+		})
+	})
+	w.Bind("vmgwUpdateAsync", func(id int, a updateArgs) {
+		async(w, id, func() (any, error) {
+			return withLab(a.Dir, "обновление", func() (any, error) { return vmgwUpdate(a) })
+		})
+	})
+	w.Bind("vmgwAddClientAsync", func(id int, a addClientArgs) {
+		async(w, id, func() (any, error) {
+			return withLab(a.Dir, "создание ВМ", func() (any, error) { return vmgwAddClient(a) })
+		})
+	})
+	w.Bind("vmgwNewLabAsync", func(id int, a newLabArgs) {
+		async(w, id, func() (any, error) {
+			return withLab(a.Dir, "создание лаборатории", func() (any, error) { return vmgwNewLab(a) })
+		})
+	})
+	w.Bind("vmgwRouterAsync", func(id int, a routerReq) {
+		async(w, id, func() (any, error) { return vmgwRouter(a) })
+	})
+	w.Bind("pickRouterFile", func(kind string) (*pickedText, error) {
+		title, f := "Профиль AmneziaWG", Filter{"Профили (*.vpn;*.conf)", "*.vpn;*.conf"}
+		if kind == "corp" {
+			title, f = "Корпоративный профиль OpenVPN", Filter{"OpenVPN (*.ovpn;*.conf)", "*.ovpn;*.conf"}
+		}
+		p, err := openDialog(owner, title, false, []Filter{f, {"Все файлы", "*.*"}})
+		if err != nil {
+			return nil, err
+		}
+		return readProfileFile(p)
+	})
+	w.Bind("vmgwOpen", vmgwOpen)
+	w.Bind("vmgwDefaults", func() map[string]string {
+		return map[string]string{"dir": defaultLabDir(), "user": strings.ToLower(os.Getenv("USERNAME"))}
+	})
+	w.Bind("pickIso", func(title string) (string, error) {
+		return openDialog(owner, title, false, []Filter{{"Образы дисков (*.iso)", "*.iso"}, {"Все файлы", "*.*"}})
+	})
+	w.Bind("pickLabFolder", func(title string) (string, error) {
+		return openDialog(owner, title, true, nil)
+	})
 
 	w.SetHtml(page)
 	if t != nil {

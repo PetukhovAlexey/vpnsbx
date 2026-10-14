@@ -1,0 +1,6 @@
+[Unit]
+Description=vmgw: watchdog for tunnels and the corporate VPN
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vmgw check

@@ -1,0 +1,10 @@
+[Unit]
+Description=vmgw: AmneziaWG tunnel awg%i (userspace)
+After=network.target
+
+[Service]
+Type=simple
+Environment=WG_PROCESS_FOREGROUND=1
+ExecStart=/usr/local/bin/amneziawg-go -f awg%i
+# No Restart=: vmgw check decides when to restart, and it re-applies the
+# config (keys, address, routes) that a bare restart would lose.
